@@ -12,12 +12,15 @@ import {
   ImageBackground,
   Dimensions,
   ScrollView,
+  Image,
 } from 'react-native';
+import { MaterialIcons } from '@expo/vector-icons';
 import { useLoginController } from '../controllers/AuthController';
 import { COLORS, RADIUS, SPACING } from './theme';
 
 const { height } = Dimensions.get('window');
 const HERO_IMAGE = require('../../assets/images/gym-hero.png');
+const GOOGLE_ICON_URI = 'https://developers.google.com/identity/images/g-logo.png';
 
 //Google icon (SVG-free inline text badge)
 function GoogleButton({ onPress, loading }) {
@@ -27,9 +30,8 @@ function GoogleButton({ onPress, loading }) {
         <ActivityIndicator color={COLORS.textPrimary} size="small" />
       ) : (
         <>
-          {/* Coloured "G" badge */}
           <View style={styles.googleIconBadge}>
-            <Text style={styles.googleIconText}>G</Text>
+            <Image source={{ uri: GOOGLE_ICON_URI }} style={styles.googleLogo} />
           </View>
           <Text style={styles.googleButtonText}>Continue with Google</Text>
         </>
@@ -76,7 +78,7 @@ export default function SignInScreen({ navigation }) {
 
           {/* Email */}
           <View style={[styles.inputContainer, ctrl.errors.email && styles.inputError]}>
-            <Text style={styles.inputIcon}>✉</Text>
+            <MaterialIcons name="mail-outline" size={18} style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="yourname@gmail.com"
@@ -99,17 +101,18 @@ export default function SignInScreen({ navigation }) {
               { marginTop: SPACING.sm },
             ]}
           >
-            <Text style={styles.inputIcon}>🔒</Text>
+            <MaterialIcons name="lock-open" size={18} style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="••••••••"
               placeholderTextColor={COLORS.textMuted}
               value={ctrl.form.password}
               onChangeText={(v) => ctrl.handleChange('password', v)}
+              onFocus={ctrl.handlePasswordFieldFocus}
               secureTextEntry={!ctrl.showPassword}
             />
             <TouchableOpacity onPress={ctrl.togglePasswordVisibility}>
-              <Text style={styles.eyeIcon}>{ctrl.showPassword ? '🙈' : '👁'}</Text>
+              <Text style={styles.showHideText}>{ctrl.showPassword ? 'Hide' : 'Show'}</Text>
             </TouchableOpacity>
           </View>
           {ctrl.errors.password ? (
@@ -203,14 +206,14 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   inputError: { borderColor: COLORS.error },
-  inputIcon: { fontSize: 15, marginRight: SPACING.sm, color: COLORS.textSecondary },
+  inputIcon: { fontSize: 15, marginRight: SPACING.sm, color: COLORS.white },
   input: {
     flex: 1,
     color: COLORS.textPrimary,
     fontSize: 15,
     paddingVertical: 0,
   },
-  eyeIcon: { fontSize: 16, marginLeft: SPACING.sm },
+  showHideText: { fontSize: 13, marginLeft: SPACING.sm, color: COLORS.white, fontWeight: '600' },
   errorText: { color: COLORS.error, fontSize: 11, marginTop: 4, marginBottom: 2 },
 
   generalErrorBox: {
@@ -279,11 +282,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: SPACING.sm,
   },
-  googleIconText: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#4285F4',
-  },
+  googleLogo: { width: 18, height: 18 },
   googleButtonText: {
     fontSize: 15,
     fontWeight: '600',

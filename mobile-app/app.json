@@ -6,6 +6,9 @@
     "orientation": "portrait",
     "assetBundlePatterns": [
       "**/*"
+    ],
+    "plugins": [
+      "@react-native-community/datetimepicker"
     ]
   }
 }

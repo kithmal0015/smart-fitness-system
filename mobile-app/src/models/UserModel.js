@@ -7,8 +7,9 @@ export const initialRegisterState = {
   password: '',
   confirmPassword: '',
   gender: '',
-  phoneNumber: '',
+  phoneNumber: '+94 ',
   dateOfBirth: '',
+  profileImage: null,
 };
 
 export const initialLoginState = {
@@ -32,8 +33,8 @@ export function validateRegisterForm(form) {
 
   if (!form.password) {
     errors.password = 'Password is required';
-  } else if (form.password.length < 6) {
-    errors.password = 'Password must be at least 6 characters';
+  } else if (!/^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/.test(form.password)) {
+    errors.password = 'Use 8+ characters with letters, numbers, and symbols';
   }
 
   if (!form.confirmPassword) {
@@ -44,10 +45,14 @@ export function validateRegisterForm(form) {
 
   if (!form.gender) errors.gender = 'Please select a gender';
 
-  if (!form.phoneNumber.trim()) {
+  const normalizedPhone = form.phoneNumber.replace(/\s/g, '');
+  const hasCountryCode = normalizedPhone.startsWith('+94');
+  const localDigits = normalizedPhone.replace(/^\+94/, '');
+
+  if (!form.phoneNumber.trim() || localDigits.length === 0) {
     errors.phoneNumber = 'Phone number is required';
-  } else if (!/^\+?[0-9]{7,15}$/.test(form.phoneNumber.replace(/\s/g, ''))) {
-    errors.phoneNumber = 'Enter a valid phone number';
+  } else if (!hasCountryCode || !/^\d{9}$/.test(localDigits)) {
+    errors.phoneNumber = 'Use +94 with exactly 9 digits';
   }
 
   if (!form.dateOfBirth.trim()) {

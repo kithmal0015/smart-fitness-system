@@ -53,8 +53,7 @@ export default function WelcomeScreen({ navigation }) {
         <Text style={styles.headlineWhite}>Your Ultimate Fitness{'\n'}Companion</Text>
 
         <Text style={styles.bodyText}>
-          Track workouts, crush goals, and transform your body — all in one
-          powerful app built for athletes like you.
+          "Transforming the way gyms operate by combining technology, efficiency, and seamless user experience."
         </Text>
 
         {/* CTA */}

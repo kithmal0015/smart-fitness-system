@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -15,7 +15,11 @@ import {
   StatusBar,
   Dimensions,
   ImageBackground,
+  Image,
+  Alert,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { MaterialIcons } from '@expo/vector-icons';
 import { useRegisterController } from '../controllers/AuthController';
 import { GENDER_OPTIONS } from '../models/UserModel';
 import { COLORS, RADIUS, SPACING } from './theme';
@@ -35,6 +39,8 @@ function InputField({
   rightIcon,
   editable = true,
   onPress,
+  onFocus,
+  onBlur,
 }) {
   const Wrapper = onPress ? TouchableOpacity : View;
   return (
@@ -51,6 +57,8 @@ function InputField({
           placeholderTextColor={COLORS.textMuted}
           value={value}
           onChangeText={onChangeText}
+          onFocus={onFocus}
+          onBlur={onBlur}
           secureTextEntry={secureTextEntry}
           keyboardType={keyboardType}
           editable={editable && !onPress}
@@ -67,6 +75,7 @@ function InputField({
 //Main View 
 export default function RegisterScreen({ navigation }) {
   const ctrl = useRegisterController(navigation);
+  const [showPasswordHint, setShowPasswordHint] = useState(false);
 
   return (
     <View style={styles.container}>
@@ -139,25 +148,36 @@ export default function RegisterScreen({ navigation }) {
             placeholder="••••••••"
             value={ctrl.form.password}
             onChangeText={(v) => ctrl.handleChange('password', v)}
+            onFocus={() => {
+              setShowPasswordHint(true);
+              ctrl.handlePasswordFieldFocus();
+            }}
+            onBlur={() => setShowPasswordHint(false)}
             error={ctrl.errors.password}
             secureTextEntry={!ctrl.showPassword}
             rightIcon={
               <TouchableOpacity onPress={ctrl.togglePasswordVisibility}>
-                <Text style={styles.eyeIcon}>{ctrl.showPassword ? '🙈' : '👁'}</Text>
+                <Text style={styles.showHideText}>{ctrl.showPassword ? 'Hide' : 'Show'}</Text>
               </TouchableOpacity>
             }
           />
+          {showPasswordHint ? (
+            <Text style={styles.passwordHintText}>
+              Use 8+ characters with a mix of letters, numbers, and symbols for a strong password
+            </Text>
+          ) : null}
 
           <InputField
             label="Confirm Password"
             placeholder="••••••••"
             value={ctrl.form.confirmPassword}
             onChangeText={(v) => ctrl.handleChange('confirmPassword', v)}
+            onFocus={ctrl.handleConfirmPasswordFocus}
             error={ctrl.errors.confirmPassword}
             secureTextEntry={!ctrl.showConfirmPassword}
             rightIcon={
               <TouchableOpacity onPress={ctrl.toggleConfirmPasswordVisibility}>
-                <Text style={styles.eyeIcon}>{ctrl.showConfirmPassword ? '🙈' : '👁'}</Text>
+                <Text style={styles.showHideText}>{ctrl.showConfirmPassword ? 'Hide' : 'Show'}</Text>
               </TouchableOpacity>
             }
           />
@@ -169,7 +189,7 @@ export default function RegisterScreen({ navigation }) {
             value={ctrl.form.gender}
             error={ctrl.errors.gender}
             editable={false}
-            onPress={ctrl.openGenderModal}
+            onPress={ctrl.handleGenderSelectorPress}
             rightIcon={<Text style={styles.chevron}>▾</Text>}
           />
 
@@ -177,7 +197,7 @@ export default function RegisterScreen({ navigation }) {
             label="Phone Number"
             placeholder="+1 234 567 8900"
             value={ctrl.form.phoneNumber}
-            onChangeText={(v) => ctrl.handleChange('phoneNumber', v)}
+            onChangeText={ctrl.handlePhoneNumberChange}
             error={ctrl.errors.phoneNumber}
             keyboardType="phone-pad"
           />
@@ -190,8 +210,43 @@ export default function RegisterScreen({ navigation }) {
             onChangeText={(v) => ctrl.handleChange('dateOfBirth', v)}
             error={ctrl.errors.dateOfBirth}
             keyboardType="numeric"
-            rightIcon={<Text style={styles.calendarIcon}>📅</Text>}
+            editable={false}
+            onPress={ctrl.openDobModal}
+            rightIcon={<MaterialIcons name="calendar-month" size={18} style={styles.calendarIcon} />}
           />
+
+          {/* Profile Image Upload */}
+          <View style={styles.imageUploadSection}>
+            <Text style={styles.fieldLabel}>Profile Picture</Text>
+            <TouchableOpacity
+              style={[
+                styles.imagePickerContainer,
+                ctrl.errors.profileImage && styles.imagePickerError,
+              ]}
+              onPress={ctrl.handleImagePick}
+            >
+              {ctrl.form.profileImage ? (
+                <View style={styles.imagePreviewWrapper}>
+                  <Image
+                    source={{ uri: ctrl.form.profileImage }}
+                    style={styles.imagePreview}
+                  />
+                  <View style={styles.changeImageOverlay}>
+                    <Text style={styles.changeImageText}>Change Photo</Text>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.imagePickerPlaceholder}>
+                  <MaterialIcons name="add-photo-alternate" size={48} style={styles.imagePickerIcon} />
+                  <Text style={styles.imagePickerText}>Tap to Add Your Photo</Text>
+                  <Text style={styles.imagePickerSubtext}>JPG, PNG up to 5MB</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+            {ctrl.errors.profileImage && (
+              <Text style={styles.errorText}>{ctrl.errors.profileImage}</Text>
+            )}
+          </View>
 
           {/* Register button */}
           <TouchableOpacity
@@ -261,6 +316,49 @@ export default function RegisterScreen({ navigation }) {
             )}
           />
         </View>
+      </Modal>
+
+      {/* ── DOB Modal ── */}
+      <Modal
+        visible={ctrl.dobModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={ctrl.closeDobModal}
+      >
+        <TouchableOpacity
+          style={styles.dobBackdrop}
+          activeOpacity={1}
+          onPress={ctrl.closeDobModal}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            style={styles.dobCard}
+            onPress={() => {}}
+          >
+            <Text style={styles.dobTitle}>Select Date of Birth</Text>
+            <DateTimePicker
+              value={ctrl.dobDraftDate}
+              mode="date"
+              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+              maximumDate={new Date()}
+              onChange={ctrl.handleDobChange}
+            />
+            <View style={styles.dobActionsRow}>
+              <TouchableOpacity
+                style={[styles.dobActionButton, styles.dobCancelButton]}
+                onPress={ctrl.closeDobModal}
+              >
+                <Text style={styles.dobCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.dobActionButton, styles.dobOkButton]}
+                onPress={ctrl.confirmDobSelection}
+              >
+                <Text style={styles.dobOkText}>OK</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
     </View>
   );
@@ -342,9 +440,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
     paddingVertical: 0,
   },
-  eyeIcon: { fontSize: 16 },
+  showHideText: { fontSize: 13, fontWeight: '600', color: COLORS.white },
+  passwordHintText: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    marginTop: -SPACING.xs,
+    marginBottom: SPACING.md,
+  },
   chevron: { color: COLORS.textSecondary, fontSize: 16 },
-  calendarIcon: { fontSize: 16 },
+  calendarIcon: { color: COLORS.white },
   errorText: { color: COLORS.error, fontSize: 11, marginTop: 4 },
 
   generalErrorBox: {
@@ -417,4 +521,110 @@ const styles = StyleSheet.create({
   modalOptionText: { fontSize: 15, color: COLORS.textSecondary },
   modalOptionTextActive: { color: COLORS.accent, fontWeight: '700' },
   checkmark: { color: COLORS.accent, fontSize: 16, fontWeight: '700' },
+
+  // DOB Modal
+  dobBackdrop: {
+    flex: 1,
+    backgroundColor: COLORS.overlayDark,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: SPACING.lg,
+  },
+  dobCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.md,
+  },
+  dobTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.white,
+    marginBottom: SPACING.sm,
+  },
+  dobActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: SPACING.sm,
+    gap: SPACING.sm,
+  },
+  dobActionButton: {
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.md,
+    borderRadius: RADIUS.md,
+  },
+  dobCancelButton: {
+    backgroundColor: COLORS.inputBg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  dobOkButton: {
+    backgroundColor: COLORS.accent,
+  },
+  dobCancelText: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  dobOkText: {
+    color: COLORS.background,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+
+  // Image Upload
+  imageUploadSection: { marginBottom: SPACING.md },
+  imagePickerContainer: {
+    backgroundColor: COLORS.inputBg,
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.md,
+    borderStyle: 'dashed',
+    paddingVertical: SPACING.lg,
+    paddingHorizontal: SPACING.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 140,
+  },
+  imagePickerError: { borderColor: COLORS.error },
+  imagePickerPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imagePickerIcon: { marginBottom: SPACING.sm, color: COLORS.white },
+  imagePickerText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    marginBottom: SPACING.xs,
+  },
+  imagePickerSubtext: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+  },
+  imagePreviewWrapper: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imagePreview: {
+    width: 100,
+    height: 100,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.border,
+  },
+  changeImageOverlay: {
+    marginTop: SPACING.sm,
+    backgroundColor: 'rgba(0,0,0,0.08)',
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.md,
+    borderRadius: RADIUS.md,
+  },
+  changeImageText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.accent,
+  },
 });
