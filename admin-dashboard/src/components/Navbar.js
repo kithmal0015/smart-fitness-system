@@ -10,6 +10,8 @@ import AssignmentIcon from "@mui/icons-material/Assignment";
 import TimelineIcon from "@mui/icons-material/Timeline";
 import SummarizeIcon from "@mui/icons-material/Summarize";
 import SettingsIcon from "@mui/icons-material/Settings";
+import TuneIcon from '@mui/icons-material/Tune';
+import KeySharpIcon from '@mui/icons-material/KeySharp';
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 
@@ -20,6 +22,7 @@ export default function Navbar({
 	sidebarOpen,
 	setSidebarOpen,
 	accent,
+	pendingRequestCount = 0,
 	onLogout,
 }) {
 	const [expandedMenus, setExpandedMenus] = useState({});
@@ -61,7 +64,15 @@ export default function Navbar({
 				{ id: "summary", label: "Summary", icon: SummarizeIcon },
 			],
 		},
-		{ id: "settings", label: "Settings", icon: SettingsIcon },
+		{
+			id: "settings",
+			label: "Settings",
+			icon: SettingsIcon,
+			submenu: [
+				{ id: "settings-dashboard", label: "Panel Setting", icon: TuneIcon },
+				{ id: "settings-new-access", label: "New Access", icon: KeySharpIcon },
+			],
+		},
 	];
 
 	return (
@@ -91,6 +102,7 @@ export default function Navbar({
 				const IconComponent = item.icon;
 				const isExpanded = expandedMenus[item.id];
 				const hasSubmenu = item.submenu && item.submenu.length > 0;
+				const showBadge = item.id === "settings" && pendingRequestCount > 0;
 
 				return (
 					<div key={item.id}>
@@ -116,6 +128,21 @@ export default function Navbar({
 							<span style={{ display: "flex", alignItems: "center", gap: "12px", flex: 1 }}>
 								<IconComponent sx={{ fontSize: 20 }} />
 								{item.label}
+								{showBadge ? (
+									<span
+										style={{
+											marginLeft: 4,
+											background: "#ef4444",
+											color: "#fff",
+											borderRadius: 999,
+											padding: "1px 7px",
+											fontSize: 11,
+											fontWeight: 700,
+										}}
+									>
+										{pendingRequestCount}
+									</span>
+								) : null}
 							</span>
 							{hasSubmenu && (isExpanded ? <ExpandLessIcon sx={{ fontSize: 18 }} /> : <ExpandMoreIcon sx={{ fontSize: 18 }} />)}
 						</button>

@@ -369,6 +369,13 @@ const styles = `
     transform: translateY(0);
   }
 
+  .ff-sign-in-btn:disabled {
+    opacity: 0.72;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: 0 4px 18px rgba(196,255,0,0.18);
+  }
+
   .ff-or-row {
     display: flex;
     align-items: center;
@@ -440,29 +447,197 @@ const styles = `
 `;
 
 export default function ForceFitLogin({ onLoginSuccess }) {
-  const VALID_USERNAME = "Kithmal0015";
-  const VALID_PASSWORD = "12345";
+  const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || "http://localhost:5000";
 
   const [showPassword, setShowPassword] = useState(false);
   const [userName, setUserName] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [isProcessingReset, setIsProcessingReset] = useState(false);
+  const [isRequestingAccess, setIsRequestingAccess] = useState(false);
 
-  const handleSignIn = (e) => {
+  const handleSignIn = async (e) => {
     e.preventDefault();
-    const isValidLogin = userName.trim() === VALID_USERNAME && password === VALID_PASSWORD;
 
-    if (!isValidLogin) {
-      setErrorMessage("Invalid username or password");
+    if (!userName.trim() || !password) {
+      setErrorMessage("Username and password are required");
       return;
     }
 
+    setIsSigningIn(true);
     setErrorMessage("");
-    console.log("Sign in:", { userName, password, remember });
 
-    if (typeof onLoginSuccess === "function") {
-      onLoginSuccess();
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userName: userName.trim(),
+          password,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setErrorMessage(data.message || "Invalid username or password");
+        return;
+      }
+
+      if (typeof onLoginSuccess === "function") {
+        onLoginSuccess(data.token, data.admin, remember);
+      }
+    } catch (_error) {
+      setErrorMessage("Cannot connect to server. Please try again.");
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (isProcessingReset) {
+      return;
+    }
+
+    const requestedUserName = window.prompt(
+      "Enter your admin username",
+      userName.trim() || ""
+    );
+
+    if (!requestedUserName || !requestedUserName.trim()) {
+      return;
+    }
+
+    setIsProcessingReset(true);
+    try {
+      const forgotResponse = await fetch(`${API_BASE_URL}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ userName: requestedUserName.trim() }),
+      });
+
+      const forgotData = await forgotResponse.json().catch(() => ({}));
+      if (!forgotResponse.ok) {
+        setErrorMessage(forgotData.message || "Failed to start password reset flow");
+        return;
+      }
+
+      const resetTokenFromServer = forgotData.resetToken || "";
+      const tokenInput = window.prompt(
+        "Paste reset token (dev mode auto-filled)",
+        resetTokenFromServer
+      );
+
+      if (!tokenInput || !tokenInput.trim()) {
+        return;
+      }
+
+      const newPassword = window.prompt(
+        "Enter new password (8+ chars with letters, numbers, symbols)"
+      );
+      if (!newPassword) {
+        return;
+      }
+
+      const confirmPassword = window.prompt("Confirm new password");
+      if (!confirmPassword) {
+        return;
+      }
+
+      const resetResponse = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          token: tokenInput.trim(),
+          newPassword,
+          confirmPassword,
+        }),
+      });
+
+      const resetData = await resetResponse.json().catch(() => ({}));
+      if (!resetResponse.ok) {
+        setErrorMessage(resetData.message || "Password reset failed");
+        return;
+      }
+
+      setErrorMessage("");
+      window.alert("Password reset successful. Please sign in with your new password.");
+    } catch (_error) {
+      setErrorMessage("Cannot connect to server. Please try again.");
+    } finally {
+      setIsProcessingReset(false);
+    }
+  };
+
+  const handleRequestAccess = async () => {
+    if (isRequestingAccess) {
+      return;
+    }
+
+    const requestedUserName = window.prompt("Enter a username for the new admin account", "");
+    if (!requestedUserName || !requestedUserName.trim()) {
+      return;
+    }
+
+    const requestedEmail = window.prompt("Enter email address", "");
+    if (!requestedEmail || !requestedEmail.trim()) {
+      return;
+    }
+
+    const requestedPassword = window.prompt(
+      "Enter password (8+ chars with letters, numbers, symbols)",
+      ""
+    );
+    if (!requestedPassword) {
+      return;
+    }
+
+    const confirmPassword = window.prompt("Confirm password", "");
+    if (!confirmPassword) {
+      return;
+    }
+
+    if (requestedPassword !== confirmPassword) {
+      setErrorMessage("Passwords do not match");
+      return;
+    }
+
+    setIsRequestingAccess(true);
+    setErrorMessage("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/access-requests`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userName: requestedUserName.trim(),
+          email: requestedEmail.trim(),
+          password: requestedPassword,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setErrorMessage(data.message || "Failed to submit access request");
+        return;
+      }
+
+      window.alert(
+        data.message || "Request submitted. Wait until the main admin approves your access."
+      );
+    } catch (_error) {
+      setErrorMessage("Cannot connect to server. Please try again.");
+    } finally {
+      setIsRequestingAccess(false);
     }
   };
 
@@ -615,13 +790,18 @@ export default function ForceFitLogin({ onLoginSuccess }) {
                 />
                 Remember me
               </label>
-              <button className="ff-forgot" type="button">
-                FORGOT PASSWORD
+              <button
+                className="ff-forgot"
+                type="button"
+                onClick={handleForgotPassword}
+                disabled={isProcessingReset}
+              >
+                {isProcessingReset ? "PROCESSING..." : "FORGOT PASSWORD"}
               </button>
             </div>
 
-            <button className="ff-sign-in-btn" onClick={handleSignIn}>
-              → SIGN IN
+            <button className="ff-sign-in-btn" onClick={handleSignIn} disabled={isSigningIn}>
+              {isSigningIn ? "SIGNING IN..." : "→ SIGN IN"}
             </button>
 
             {errorMessage && (
@@ -645,7 +825,15 @@ export default function ForceFitLogin({ onLoginSuccess }) {
             </div>
 
             <div className="ff-request">
-              New admin? <button className="ff-request-link" type="button">Request Access →</button>
+              New admin?{" "}
+              <button
+                className="ff-request-link"
+                type="button"
+                onClick={handleRequestAccess}
+                disabled={isRequestingAccess}
+              >
+                {isRequestingAccess ? "Submitting..." : "Request Access →"}
+              </button>
             </div>
           </div>
         </div>
