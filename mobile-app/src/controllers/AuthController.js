@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Alert } from 'react-native';
-import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
+import * as ImagePicker from 'expo-image-picker';
 import {
   initialRegisterState,
   initialLoginState,
@@ -126,94 +126,117 @@ export function useRegisterController(navigation) {
     setDobModalVisible(false);
   };
 
+  const setPickedImage = (asset) => {
+    if (!asset || !asset.uri) {
+      return;
+    }
+
+    const maxAllowedBytes = 5 * 1024 * 1024;
+    if (asset.fileSize && asset.fileSize > maxAllowedBytes) {
+      setErrors((prev) => ({
+        ...prev,
+        profileImage: 'Image must be less than 5MB',
+      }));
+      return;
+    }
+
+    const estimatedBase64Bytes = asset.base64 ? Math.ceil((asset.base64.length * 3) / 4) : 0;
+    if (estimatedBase64Bytes > maxAllowedBytes) {
+      setErrors((prev) => ({
+        ...prev,
+        profileImage: 'Image must be less than 5MB',
+      }));
+      return;
+    }
+
+    const mimeType = String(asset.mimeType || 'image/jpeg').trim() || 'image/jpeg';
+    const imageValue = asset.base64 ? `data:${mimeType};base64,${asset.base64}` : asset.uri;
+
+    setForm((prev) => ({ ...prev, profileImage: imageValue }));
+    setErrors((prev) => ({ ...prev, profileImage: null }));
+  };
+
+  const pickFromCamera = async () => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      setErrors((prev) => ({
+        ...prev,
+        profileImage: 'Camera permission is required to take a photo',
+      }));
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+      allowsEditing: true,
+      aspect: [1, 1],
+      base64: true,
+      exif: false,
+    });
+
+    if (result.canceled || !result.assets || result.assets.length === 0) {
+      return;
+    }
+
+    setPickedImage(result.assets[0]);
+  };
+
+  const pickFromGallery = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setErrors((prev) => ({
+        ...prev,
+        profileImage: 'Gallery permission is required to choose a photo',
+      }));
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+      allowsEditing: true,
+      aspect: [1, 1],
+      base64: true,
+      exif: false,
+    });
+
+    if (result.canceled || !result.assets || result.assets.length === 0) {
+      return;
+    }
+
+    setPickedImage(result.assets[0]);
+  };
+
   const handleImagePick = () => {
-    Alert.alert(
-      'Add Profile Picture',
-      'Choose how to add your photo',
-      [
-        {
-          text: 'Camera',
-          onPress: () => {
-            launchCamera(
-              {
-                mediaType: 'photo',
-                includeBase64: false,
-                maxHeight: 400,
-                maxWidth: 400,
-                quality: 0.8,
-              },
-              (response) => {
-                if (response.didCancel) {
-                  return;
-                }
-                if (response.errorCode) {
-                  setErrors((prev) => ({
-                    ...prev,
-                    profileImage: 'Failed to capture photo: ' + response.errorMessage,
-                  }));
-                  return;
-                }
-                if (response.assets && response.assets.length > 0) {
-                  const asset = response.assets[0];
-                  if (asset.fileSize && asset.fileSize > 5242880) {
-                    setErrors((prev) => ({
-                      ...prev,
-                      profileImage: 'Image must be less than 5MB',
-                    }));
-                    return;
-                  }
-                  setForm((prev) => ({ ...prev, profileImage: asset.uri }));
-                  setErrors((prev) => ({ ...prev, profileImage: null }));
-                }
-              }
-            );
-          },
+    Alert.alert('Add Profile Picture', 'Choose how to add your photo', [
+      {
+        text: 'Camera',
+        onPress: () => {
+          pickFromCamera().catch(() => {
+            setErrors((prev) => ({
+              ...prev,
+              profileImage: 'Failed to capture photo',
+            }));
+          });
         },
-        {
-          text: 'Gallery',
-          onPress: () => {
-            launchImageLibrary(
-              {
-                mediaType: 'photo',
-                includeBase64: false,
-                maxHeight: 400,
-                maxWidth: 400,
-                quality: 0.8,
-              },
-              (response) => {
-                if (response.didCancel) {
-                  return;
-                }
-                if (response.errorCode) {
-                  setErrors((prev) => ({
-                    ...prev,
-                    profileImage: 'Failed to pick image: ' + response.errorMessage,
-                  }));
-                  return;
-                }
-                if (response.assets && response.assets.length > 0) {
-                  const asset = response.assets[0];
-                  if (asset.fileSize && asset.fileSize > 5242880) {
-                    setErrors((prev) => ({
-                      ...prev,
-                      profileImage: 'Image must be less than 5MB',
-                    }));
-                    return;
-                  }
-                  setForm((prev) => ({ ...prev, profileImage: asset.uri }));
-                  setErrors((prev) => ({ ...prev, profileImage: null }));
-                }
-              }
-            );
-          },
+      },
+      {
+        text: 'Gallery',
+        onPress: () => {
+          pickFromGallery().catch(() => {
+            setErrors((prev) => ({
+              ...prev,
+              profileImage: 'Failed to pick image',
+            }));
+          });
         },
-        {
-          text: 'Cancel',
-          onPress: () => {},
-          style: 'cancel',
-        },
-      ]
-    );
+      },
+      {
+        text: 'Cancel',
+        style: 'cancel',
+      },
+    ]);
   };
 
   const handleRegister = async () => {
@@ -224,11 +247,8 @@ export function useRegisterController(navigation) {
     }
     setLoading(true);
     try {
-      // TODO: Replace with real API call
-      await new Promise((r) => setTimeout(r, 1200));
-      console.log('Register payload:', form);
-      // On success navigate to main app or sign-in
-      navigation.navigate('SignIn');
+      // Continue to payment and submit registration together after successful payment.
+      navigation.navigate('Paymengatway', { registerData: form });
     } catch (err) {
       setErrors({ general: 'Registration failed. Please try again.' });
     } finally {

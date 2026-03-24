@@ -8,7 +8,14 @@
       "**/*"
     ],
     "plugins": [
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Smart Fitness to access your photos.",
+          "cameraPermission": "Allow Smart Fitness to access your camera."
+        }
+      ]
     ]
   }
 }
