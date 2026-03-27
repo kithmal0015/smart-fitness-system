@@ -193,10 +193,10 @@ export default function Paymengatway({ navigation, route }) {
 								activeOpacity={0.85}
 								onPress={() => setIncludeMonthFee((prev) => !prev)}
 							>
-								<Text style={styles.optionText}>Month Fee</Text>
-								<View style={includeMonthFee ? styles.checkboxChecked : styles.checkboxEmpty}>
+								{/* <Text style={styles.optionText}>Month Fee</Text> */}
+								{/* <View style={includeMonthFee ? styles.checkboxChecked : styles.checkboxEmpty}>
 									{includeMonthFee ? <Text style={styles.checkMark}>✓</Text> : null}
-								</View>
+								</View> */}
 							</TouchableOpacity>
 						</View>
 					</View>

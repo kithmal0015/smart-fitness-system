@@ -7,6 +7,8 @@ import {
   validateRegisterForm,
   validateLoginForm,
 } from '../models/UserModel';
+import { API_BASE_URL } from '../config/api';
+import { useAppSession } from '../context/AppSessionContext';
 
 // useRegisterController
 export function useRegisterController(navigation) {
@@ -286,6 +288,7 @@ export function useRegisterController(navigation) {
 
 // useLoginController 
 export function useLoginController(navigation) {
+  const { signIn } = useAppSession();
   const [form, setForm] = useState(initialLoginState);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
@@ -316,29 +319,48 @@ export function useLoginController(navigation) {
     }
     setLoading(true);
     try {
-      // TODO: Replace with real API call
-      await new Promise((r) => setTimeout(r, 1000));
-      console.log('Login payload:', form);
-      // Navigate to main app
-      navigation.navigate('Home');
+      const response = await fetch(`${API_BASE_URL}/api/mobile/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: form.email.trim().toLowerCase(),
+          password: form.password,
+        }),
+      });
+
+      let result = null;
+      try {
+        result = await response.json();
+      } catch (_jsonError) {
+        result = null;
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          (result && result.message) || 'Invalid credentials. Please try again.'
+        );
+      }
+
+      signIn({
+        token: result && result.token,
+        user: (result && result.item) || null,
+      });
+
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'Home' }],
+      });
     } catch (err) {
-      setErrors({ general: 'Invalid credentials. Please try again.' });
+      setErrors({ general: (err && err.message) || 'Invalid credentials. Please try again.' });
     } finally {
       setLoading(false);
     }
   };
 
   const handleGoogleSignIn = async () => {
-    setLoading(true);
-    try {
-      // TODO: Replace with Google Sign-In SDK
-      await new Promise((r) => setTimeout(r, 800));
-      console.log('Google Sign-In');
-    } catch (err) {
-      setErrors({ general: 'Google sign-in failed.' });
-    } finally {
-      setLoading(false);
-    }
+    setErrors({ general: 'Please sign in using your registered email and password.' });
   };
 
   return {

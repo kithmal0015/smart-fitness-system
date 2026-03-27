@@ -12,7 +12,6 @@ import {
   ImageBackground,
   Dimensions,
   ScrollView,
-  Image,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useLoginController } from '../controllers/AuthController';
@@ -20,25 +19,6 @@ import { COLORS, RADIUS, SPACING } from './theme';
 
 const { height } = Dimensions.get('window');
 const HERO_IMAGE = require('../../assets/images/gym-hero.png');
-const GOOGLE_ICON_URI = 'https://developers.google.com/identity/images/g-logo.png';
-
-//Google icon (SVG-free inline text badge)
-function GoogleButton({ onPress, loading }) {
-  return (
-    <TouchableOpacity style={styles.googleButton} onPress={onPress} activeOpacity={0.85}>
-      {loading ? (
-        <ActivityIndicator color={COLORS.textPrimary} size="small" />
-      ) : (
-        <>
-          <View style={styles.googleIconBadge}>
-            <Image source={{ uri: GOOGLE_ICON_URI }} style={styles.googleLogo} />
-          </View>
-          <Text style={styles.googleButtonText}>Continue with Google</Text>
-        </>
-      )}
-    </TouchableOpacity>
-  );
-}
 
 // Main View
 export default function SignInScreen({ navigation }) {
@@ -119,6 +99,14 @@ export default function SignInScreen({ navigation }) {
             <Text style={styles.errorText}>{ctrl.errors.password}</Text>
           ) : null}
 
+          <TouchableOpacity
+            style={styles.forgotPasswordButton}
+            onPress={() => navigation.navigate('ForgotPassword')}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+          </TouchableOpacity>
+
           {/* Continue button */}
           <TouchableOpacity
             style={[styles.continueButton, ctrl.loading && styles.buttonDisabled]}
@@ -132,16 +120,6 @@ export default function SignInScreen({ navigation }) {
               <Text style={styles.continueButtonText}>Continue</Text>
             )}
           </TouchableOpacity>
-
-          {/* Divider */}
-          <View style={styles.dividerRow}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>Or sign in with</Text>
-            <View style={styles.dividerLine} />
-          </View>
-
-          {/* Google sign-in only */}
-          <GoogleButton onPress={ctrl.handleGoogleSignIn} loading={ctrl.loading} />
 
           {/* Footer */}
           <View style={styles.footerRow}>
@@ -215,6 +193,15 @@ const styles = StyleSheet.create({
   },
   showHideText: { fontSize: 13, marginLeft: SPACING.sm, color: COLORS.white, fontWeight: '600' },
   errorText: { color: COLORS.error, fontSize: 11, marginTop: 4, marginBottom: 2 },
+  forgotPasswordButton: {
+    alignSelf: 'flex-end',
+    marginTop: 4,
+  },
+  forgotPasswordText: {
+    color: COLORS.accent,
+    fontSize: 12,
+    fontWeight: '700',
+  },
 
   generalErrorBox: {
     backgroundColor: 'rgba(255,77,77,0.12)',
@@ -240,53 +227,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.background,
     letterSpacing: 0.5,
-  },
-
-  // Divider
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: SPACING.md,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: COLORS.border,
-  },
-  dividerText: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
-    marginHorizontal: SPACING.sm,
-  },
-
-  // Google button
-  googleButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.surfaceAlt,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: RADIUS.md,
-    paddingVertical: 14,
-    paddingHorizontal: SPACING.md,
-    marginBottom: SPACING.lg,
-    gap: SPACING.sm,
-  },
-  googleIconBadge: {
-    width: 26,
-    height: 26,
-    borderRadius: RADIUS.full,
-    backgroundColor: COLORS.white,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: SPACING.sm,
-  },
-  googleLogo: { width: 18, height: 18 },
-  googleButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
   },
 
   // Footer

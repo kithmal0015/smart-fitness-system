@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -6,138 +6,340 @@ import {
   ScrollView,
   TouchableOpacity,
   Image,
-  FlatList,
+  Animated,
+  Alert,
   StatusBar,
   Dimensions,
   ImageBackground,
-  SafeAreaView,
 } from 'react-native';
+import { MaterialIcons } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, RADIUS, SPACING } from './theme';
+import { useAppSession } from '../context/AppSessionContext';
+import { API_BASE_URL } from '../config/api';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - SPACING.lg * 2 - SPACING.sm) / 2;
+const WORKOUT_PLAN_CYCLE = ['Chest with Triceps', 'Arms with Legs', 'Rest Day'];
 
-// Mock Data 
-const WEEK_DAYS = [
-  { day: 'Mon', date: 22 },
-  { day: 'Tue', date: 23 },
-  { day: 'Wed', date: 24 },
-  { day: 'Thu', date: 25, active: true },
-  { day: 'Fri', date: 26 },
-  { day: 'Sat', date: 26 },
-  { day: 'Sun', date: 26 },
-];
+function getOrdinalSuffix(day) {
+  if (day > 3 && day < 21) return 'th';
+  switch (day % 10) {
+    case 1:
+      return 'st';
+    case 2:
+      return 'nd';
+    case 3:
+      return 'rd';
+    default:
+      return 'th';
+  }
+}
+
+function getWorkoutPlanForDate(date) {
+  const baseDate = new Date(2026, 2, 26);
+  const currentDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const dayDiff = Math.round((currentDate.getTime() - baseDate.getTime()) / msPerDay);
+  const planIndex = ((dayDiff % WORKOUT_PLAN_CYCLE.length) + WORKOUT_PLAN_CYCLE.length) % WORKOUT_PLAN_CYCLE.length;
+
+  return WORKOUT_PLAN_CYCLE[planIndex];
+}
+
+// Mock Data
+function getCurrentWeekDays() {
+  const today = new Date();
+  const mondayOffset = (today.getDay() + 6) % 7;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - mondayOffset);
+
+  const todayKey = today.toISOString().slice(0, 10);
+  const weekDays = [];
+
+  for (let i = 0; i < 7; i += 1) {
+    const current = new Date(monday);
+    current.setDate(monday.getDate() + i);
+    const dateKey = current.toISOString().slice(0, 10);
+
+    weekDays.push({
+      day: current.toLocaleDateString('en-US', { weekday: 'short' }),
+      date: current.getDate(),
+      dateKey,
+      active: dateKey === todayKey,
+    });
+  }
+
+  return weekDays;
+}
 
 const CATEGORIES = ['All Type', 'Chest', 'Arms', 'Cardio', 'Yoga'];
 
 const PROGRAMS = [
   {
     id: '1',
-    title: 'Chest Program',
+    title: 'Chest Day',
     subtitle: 'Focus on proper form over...',
-    duration: '12 min',
-    reps: '3 x 16 reps',
-    image: 'https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=400',
+    duration: '2 hours',
+    image: require('../../assets/chest-day.jpg'),
   },
+
   {
     id: '2',
-    title: 'Arms Program',
+    title: 'Arms Day',
     subtitle: 'Increase weights gradually',
-    duration: '15 min',
-    reps: '3 x 12 reps',
-    image: 'https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e?w=400',
+    duration: '2 hours',
+    image: require('../../assets/arms-day.jpg'),
   },
+
   {
     id: '3',
-    title: 'Cardio Blast',
+    title: 'Cardio Day',
     subtitle: 'High intensity intervals',
-    duration: '30 min',
-    reps: '3 x 16 reps',
-    image: 'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=400',
+    duration: '30 min per day',
+    image: 'https://www.biofitgym.com/BiofitGym/images/group_classes/gc1.JPG',
   },
+
   {
     id: '4',
-    title: 'Core Power',
+    title: 'Yoga Day',
     subtitle: 'Strengthen your foundation',
     duration: '10 min',
-    reps: '3 x 12 reps',
-    image: 'https://images.unsplash.com/photo-1552674605-db6ffd4facb5?w=400',
+    image: 'https://incometaxgujarat.gov.in/uploads/photogallery_city/d6e9b3900437fe3024c181daf907aa26.jpg',
   },
 ];
 
-const CHALLENGE_AVATARS = [
-  'https://randomuser.me/api/portraits/women/44.jpg',
-  'https://randomuser.me/api/portraits/men/32.jpg',
-  'https://randomuser.me/api/portraits/women/68.jpg',
+
+
+
+const DEFAULT_ADVERTISEMENTS = [
+  {
+    id: 'ad-1',
+    title: 'New Year Table',
+    subtitle: 'New Year Table Event. See you on Apr 14, 2026, at 08:30 AM at the gym!',
+    image: require('../../assets/ad-1.jpg'),
+  },
+  {
+    id: 'ad-2',
+    title: 'Cricket Match',
+    subtitle: 'The event is scheduled for April 22, 2026, at 9:00 AM, and will be held at Saniro, Veyangoda.',
+    image: require('../../assets/ad-2.jpg'),
+  },
+  {
+    id: 'ad-3',
+    title: 'New Packages',
+    subtitle: 'Introductory Membership Packages with New Member Special Offers',
+    image: require('../../assets/ad-3.jpg'),
+  },
 ];
 
 //Sub-components
-function Header() {
+function Header({ user, onProfilePress, colors }) {
+	const firstName = String((user && user.firstName) || '').trim() || 'Member';
+	const profileImage =
+		String((user && user.profileImage) || '').trim() ||
+		'https://via.placeholder.com/100';
+	const todayLabel = new Date().toLocaleDateString('en-GB', {
+		day: '2-digit',
+		month: 'short',
+	});
+
   return (
     <View style={styles.header}>
-      <Image
-        source={{ uri: 'https://randomuser.me/api/portraits/men/75.jpg' }}
-        style={styles.avatar}
-      />
+      <TouchableOpacity onPress={onProfilePress} activeOpacity={0.85}>
+        <Image
+          source={{ uri: profileImage }}
+          style={[styles.avatar, { borderColor: colors.accent }]}
+        />
+      </TouchableOpacity>
       <View style={styles.headerCenter}>
-        <Text style={styles.headerGreeting}>Hello, Martin</Text>
-        <Text style={styles.headerDate}>Today 25 Jan</Text>
+        <Text style={[styles.headerGreeting, { color: colors.textPrimary }]}>Hello, {firstName}</Text>
+        <Text style={[styles.headerDate, { color: colors.textSecondary }]}>Today {todayLabel}</Text>
       </View>
-      <TouchableOpacity style={styles.bellButton}>
-        <Text style={styles.bellIcon}>🔔</Text>
+      <TouchableOpacity style={[styles.bellButton, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}
+        onPress={onProfilePress}
+      >
+        <MaterialIcons name="notifications-active" size={20} color={colors.textSecondary} />
       </TouchableOpacity>
     </View>
   );
 }
 
-function DailyChallengeBanner() {
+function AdvertisementCarousel({ colors }) {
+  const [activeAdIndex, setActiveAdIndex] = useState(0);
+  const [isAdImageReady, setIsAdImageReady] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [advertisements, setAdvertisements] = useState(DEFAULT_ADVERTISEMENTS);
+
+  const getAdImageSource = (adImage) =>
+    typeof adImage === 'string' ? { uri: adImage } : adImage;
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadAdvertisements = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/mobile/advertisements`, {
+          method: 'GET',
+        });
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          return;
+        }
+
+        const rawItems = Array.isArray(data.items) ? data.items : [];
+        const normalized = rawItems
+          .map((item, index) => {
+            const image = String((item && item.image) || '').trim();
+            const title = String((item && item.title) || '').trim();
+            const subtitle = String((item && item.subtitle) || '').trim();
+
+            if (!image || !title) {
+              return null;
+            }
+
+            return {
+              id: String((item && item._id) || (item && item.id) || `ad-api-${index + 1}`),
+              title,
+              subtitle,
+              image,
+            };
+          })
+          .filter(Boolean);
+
+        if (isMounted && normalized.length > 0) {
+          setAdvertisements(normalized);
+        }
+      } catch (_error) {
+      }
+    };
+
+    loadAdvertisements();
+    const refreshTimer = setInterval(loadAdvertisements, 30000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(refreshTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!advertisements.length) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setActiveAdIndex((prev) => (prev + 1) % advertisements.length);
+    }, 3000);
+
+    return () => clearInterval(timer);
+  }, [advertisements.length]);
+
+  useEffect(() => {
+    if (activeAdIndex >= advertisements.length) {
+      setActiveAdIndex(0);
+    }
+  }, [activeAdIndex, advertisements.length]);
+
+  const activeAd = advertisements[activeAdIndex] || advertisements[0];
+
+  if (!activeAd) {
+    return null;
+  }
+
+  useEffect(() => {
+    setIsAdImageReady(false);
+    fadeAnim.setValue(0);
+  }, [activeAdIndex, fadeAnim]);
+
+  const handleAdImageLoadEnd = () => {
+    setIsAdImageReady(true);
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 320,
+      useNativeDriver: true,
+    }).start();
+  };
+
   return (
-    <View style={styles.challengeBanner}>
-      {/* Text side */}
+    <View style={[styles.challengeBanner, { backgroundColor: colors.accent }]}> 
+      {/* Hidden preloaders warm up image decoding to avoid visible lag on slide change */}
+      <View style={styles.hiddenPreloadWrap} pointerEvents="none">
+        {advertisements.map((item) => (
+          <Image
+            key={`preload-${item.id}`}
+            source={getAdImageSource(item.image)}
+            style={styles.hiddenPreloadImage}
+            resizeMode="cover"
+          />
+        ))}
+      </View>
+
       <View style={styles.challengeTextSide}>
-        <Text style={styles.challengeTitle}>Daily{'\n'}Challenge</Text>
-        <Text style={styles.challengeSubtitle}>Do your plan before 09:00 AM</Text>
-        {/* Avatar group */}
-        <View style={styles.avatarGroup}>
-          {CHALLENGE_AVATARS.map((uri, i) => (
-            <Image
-              key={i}
-              source={{ uri }}
-              style={[styles.challengeAvatar, { marginLeft: i === 0 ? 0 : -10 }]}
+        <Text style={styles.adTitle}>{activeAd.title}</Text>
+        <Text style={styles.challengeSubtitle}>{activeAd.subtitle}</Text>
+        <View style={styles.adDotRow}>
+          {advertisements.map((item, index) => (
+            <View
+              key={item.id}
+              style={[
+                styles.adDot,
+                {
+                  backgroundColor: index === activeAdIndex ? colors.background : 'rgba(0,0,0,0.25)',
+                },
+              ]}
             />
           ))}
-          <View style={styles.extraBadge}>
-            <Text style={styles.extraBadgeText}>+4</Text>
-          </View>
         </View>
       </View>
-      {/* Image side */}
-      <Image
-        source={{ uri: 'https://images.unsplash.com/photo-1518611012118-696072aa579a?w=300' }}
-        style={styles.challengeImage}
+      {!isAdImageReady && (
+        <View style={[styles.challengeImagePlaceholder, { backgroundColor: 'rgba(0,0,0,0.12)' }]} />
+      )}
+      <Animated.Image
+        key={activeAd.id}
+        source={getAdImageSource(activeAd.image)}
+        style={[styles.challengeImage, { opacity: fadeAnim }]}
         resizeMode="cover"
+        onLoadEnd={handleAdImageLoadEnd}
       />
     </View>
   );
 }
 
-function WeekStrip() {
-  const [selected, setSelected] = useState(25);
+function WeekStrip({ colors }) {
+  const weekDays = useMemo(() => getCurrentWeekDays(), []);
+  const [selected, setSelected] = useState(
+    () => weekDays.find((item) => item.active)?.dateKey || weekDays[0]?.dateKey
+  );
+
+  const handleDayPress = (item) => {
+    setSelected(item.dateKey);
+
+    const selectedDate = new Date(item.dateKey);
+    const dayNumber = selectedDate.getDate();
+    const suffix = getOrdinalSuffix(dayNumber);
+    const workoutPlan = getWorkoutPlanForDate(selectedDate);
+
+    Alert.alert('Daily Workout', `Today is ${dayNumber}${suffix}, You have ${workoutPlan}.`);
+  };
+
   return (
     <View style={styles.weekStrip}>
-      {WEEK_DAYS.map((item) => {
-        const isActive = selected === item.date && item.active !== undefined
-          ? true
-          : selected === item.date;
+      {weekDays.map((item) => {
+        const isActive = selected === item.dateKey;
         return (
           <TouchableOpacity
-            key={`${item.day}-${item.date}`}
-            style={[styles.dayChip, isActive && styles.dayChipActive]}
-            onPress={() => setSelected(item.date)}
+            key={item.dateKey}
+            style={[
+              styles.dayChip,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+              isActive && [styles.dayChipActive, { borderColor: colors.accent, backgroundColor: colors.background }],
+            ]}
+            onPress={() => handleDayPress(item)}
           >
-            <Text style={[styles.dayText, isActive && styles.dayTextActive]}>{item.day}</Text>
-            <Text style={[styles.dateText, isActive && styles.dateTextActive]}>{item.date}</Text>
-            {isActive && <View style={styles.activeDot} />}
+            <Text style={[styles.dayText, { color: colors.textSecondary }, isActive && [styles.dayTextActive, { color: colors.accent }]]}>{item.day}</Text>
+            <Text style={[styles.dateText, { color: colors.textSecondary }, isActive && [styles.dateTextActive, { color: colors.textPrimary }]]}>{item.date}</Text>
+            {isActive && <View style={[styles.activeDot, { backgroundColor: colors.accent }]} />}
           </TouchableOpacity>
         );
       })}
@@ -145,7 +347,7 @@ function WeekStrip() {
   );
 }
 
-function CategoryTabs({ selected, onSelect }) {
+function CategoryTabs({ selected, onSelect, colors }) {
   return (
     <ScrollView
       horizontal
@@ -155,10 +357,20 @@ function CategoryTabs({ selected, onSelect }) {
       {CATEGORIES.map((cat) => (
         <TouchableOpacity
           key={cat}
-          style={[styles.categoryChip, selected === cat && styles.categoryChipActive]}
+          style={[
+            styles.categoryChip,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+            selected === cat && [styles.categoryChipActive, { backgroundColor: colors.accent, borderColor: colors.accent }],
+          ]}
           onPress={() => onSelect(cat)}
         >
-          <Text style={[styles.categoryText, selected === cat && styles.categoryTextActive]}>
+          <Text
+            style={[
+              styles.categoryText,
+              { color: colors.textSecondary },
+              selected === cat && [styles.categoryTextActive, { color: colors.background }],
+            ]}
+          >
             {cat}
           </Text>
         </TouchableOpacity>
@@ -167,11 +379,11 @@ function CategoryTabs({ selected, onSelect }) {
   );
 }
 
-function ProgramCard({ item }) {
+function ProgramCard({ item, colors }) {
   return (
     <TouchableOpacity style={styles.programCard} activeOpacity={0.88}>
       <ImageBackground
-        source={{ uri: item.image }}
+        source={typeof item.image === 'string' ? { uri: item.image } : item.image}
         style={styles.programCardBg}
         imageStyle={{ borderRadius: RADIUS.lg }}
         resizeMode="cover"
@@ -181,10 +393,10 @@ function ProgramCard({ item }) {
         {/* Top badges */}
         <View style={styles.programBadgeRow}>
           <View style={styles.programBadge}>
-            <Text style={styles.programBadgeText}>⏱ {item.duration}</Text>
+            <Text style={[styles.programBadgeText, { color: colors.white }]}>⏱ {item.duration}</Text>
           </View>
           <View style={styles.programBadge}>
-            <Text style={styles.programBadgeText}>{item.reps}</Text>
+            <Text style={[styles.programBadgeText, { color: colors.white }]}>{item.reps}</Text>
           </View>
         </View>
         {/* Bottom text */}
@@ -197,33 +409,46 @@ function ProgramCard({ item }) {
   );
 }
 
-function ProgramGrid({ programs }) {
+function ProgramGrid({ programs, colors }) {
   return (
     <View style={styles.programGrid}>
       {programs.map((item, index) => (
-        <ProgramCard key={item.id} item={item} />
+        <ProgramCard key={item.id} item={item} colors={colors} />
       ))}
     </View>
   );
 }
 
-function BottomNav() {
+function BottomNav({ onProfilePress, colors }) {
   const [active, setActive] = useState('home');
   const tabs = [
-    { key: 'home', icon: '🏠' },
-    { key: 'stats', icon: '📊' },
-    { key: 'apps', icon: '⚡' },
-    { key: 'profile', icon: '👤' },
+    { key: 'home', iconName: 'home' },
+    { key: 'stats', iconName: 'assessment' },
+    { key: 'apps', iconName: 'credit-score' },
+    { key: 'qr', iconName: 'qr-code' },
   ];
   return (
-    <View style={styles.bottomNav}>
+    <View style={[styles.bottomNav, { backgroundColor: colors.surface, borderTopColor: colors.border }]}> 
       {tabs.map((tab) => (
         <TouchableOpacity
           key={tab.key}
-          style={[styles.navItem, active === tab.key && styles.navItemActive]}
-          onPress={() => setActive(tab.key)}
+          style={[
+            styles.navItem,
+            active === tab.key && [styles.navItemActive, { backgroundColor: colors.accent }],
+          ]}
+          onPress={() => {
+            setActive(tab.key);
+            if (tab.key === 'profile' && onProfilePress) {
+              onProfilePress();
+            }
+          }}
         >
-          <Text style={styles.navIcon}>{tab.icon}</Text>
+          <MaterialIcons
+             name={tab.iconName}
+            size={25}
+            style={{ opacity: active === tab.key ? 1 : 0.55 }}
+            color={active === tab.key ? colors.background : colors.textSecondary}
+          />
         </TouchableOpacity>
       ))}
     </View>
@@ -231,8 +456,18 @@ function BottomNav() {
 }
 
 //Main Screen
-export default function HomeScreen() {
+export default function HomeScreen({ navigation }) {
+  const { currentUser, themeMode, colors } = useAppSession();
   const [activeCategory, setActiveCategory] = useState('All Type');
+
+  const statusBarStyle = useMemo(
+    () => (themeMode === 'dark' ? 'light-content' : 'dark-content'),
+    [themeMode]
+  );
+
+  const openProfileSettings = () => {
+    navigation.navigate('ProfileSettings');
+  };
 
   const filteredPrograms =
     activeCategory === 'All Type'
@@ -242,39 +477,39 @@ export default function HomeScreen() {
         );
 
   return (
-    <View style={styles.container}>
-      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+    <View style={[styles.container, { backgroundColor: colors.background }]}> 
+      <StatusBar translucent backgroundColor="transparent" barStyle={statusBarStyle} />
       <SafeAreaView style={{ flex: 1 }}>
         <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
         >
           {/* Header */}
-          <Header />
+          <Header user={currentUser} onProfilePress={openProfileSettings} colors={colors} />
 
-          {/* Daily Challenge Banner */}
-          <DailyChallengeBanner />
+          {/* Advertisement Banner */}
+          <AdvertisementCarousel colors={colors} />
 
           {/* Week calendar strip */}
-          <WeekStrip />
+          <WeekStrip colors={colors} />
 
           {/* Daily Program section */}
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Daily Program</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Daily Program</Text>
             <TouchableOpacity>
-              <Text style={styles.seeAll}>See All</Text>
+              <Text style={[styles.seeAll, { color: colors.textSecondary }]}>See All</Text>
             </TouchableOpacity>
           </View>
 
           {/* Category tabs */}
-          <CategoryTabs selected={activeCategory} onSelect={setActiveCategory} />
+          <CategoryTabs selected={activeCategory} onSelect={setActiveCategory} colors={colors} />
 
           {/* Program grid */}
-          <ProgramGrid programs={filteredPrograms.length > 0 ? filteredPrograms : PROGRAMS} />
+          <ProgramGrid programs={filteredPrograms.length > 0 ? filteredPrograms : PROGRAMS} colors={colors} />
         </ScrollView>
 
         {/* Bottom nav */}
-        <BottomNav />
+        <BottomNav onProfilePress={openProfileSettings} colors={colors} />
       </SafeAreaView>
     </View>
   );
@@ -317,8 +552,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  bellIcon: { fontSize: 16 },
-
   // Daily Challenge Banner
   challengeBanner: {
     marginHorizontal: SPACING.lg,
@@ -335,11 +568,18 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   challengeTitle: {
-    fontSize: 26,
+    fontSize: 15,
+    fontWeight: '800',
+    color: COLORS.background,
+    lineHeight: 20,
+    letterSpacing: -0.5,
+  },
+  adTitle: {
+    fontSize: 22,
     fontWeight: '900',
     color: COLORS.background,
-    lineHeight: 30,
-    letterSpacing: -0.5,
+    lineHeight: 26,
+    marginTop: 2,
   },
   challengeSubtitle: {
     fontSize: 12,
@@ -347,31 +587,38 @@ const styles = StyleSheet.create({
     marginTop: SPACING.xs,
     marginBottom: SPACING.sm,
   },
-  avatarGroup: {
+  adDotRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: SPACING.xs,
+    marginTop: 4,
   },
-  challengeAvatar: {
-    width: 28,
-    height: 28,
+  adDot: {
+    width: 8,
+    height: 8,
     borderRadius: RADIUS.full,
-    borderWidth: 2,
-    borderColor: COLORS.accent,
+    marginRight: 6,
   },
-  extraBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: RADIUS.full,
-    backgroundColor: 'rgba(0,0,0,0.25)',
-    marginLeft: -10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  extraBadgeText: { fontSize: 10, fontWeight: '700', color: COLORS.background },
   challengeImage: {
     width: 130,
     height: '100%',
+  },
+  challengeImagePlaceholder: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    width: 130,
+    height: '100%',
+  },
+  hiddenPreloadWrap: {
+    position: 'absolute',
+    width: 0,
+    height: 0,
+    overflow: 'hidden',
+  },
+  hiddenPreloadImage: {
+    width: 1,
+    height: 1,
+    opacity: 0,
   },
 
   // Week strip
@@ -515,8 +762,8 @@ const styles = StyleSheet.create({
     paddingBottom: SPACING.sm,
   },
   navItem: {
-    width: 48,
-    height: 48,
+    width: 50,
+    height: 50,
     borderRadius: RADIUS.full,
     alignItems: 'center',
     justifyContent: 'center',
