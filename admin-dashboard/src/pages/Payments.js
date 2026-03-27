@@ -1,37 +1,110 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
-const MEMBER_PAYMENTS = [
-	{
-		memberId: "M-102",
-		name: "Nimal Perera",
-		admissionFee: "Done",
-		plan: "Monthly",
-		amount: "LKR 5,500",
-		paymentDate: "2026-03-02",
-		paymentDueDate: "2026-03-12",
-		status: "Done",
-	},
-	{
-		memberId: "M-118",
-		name: "Kamal Silva",
-		admissionFee: "Pending",
-		plan: "Quarterly",
-		amount: "LKR 14,000",
-		paymentDate: "2026-03-10",
-		paymentDueDate: "2026-03-18",
-		status: "Pending",
-	},
-	{
-		memberId: "M-133",
-		name: "Rashmi Fernando",
-		admissionFee: "Done",
-		plan: "Yearly",
-		amount: "LKR 6,000",
-		paymentDate: "2026-03-19",
-		paymentDueDate: "2026-03-24",
-		status: "Done",
-	},
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || "http://localhost:5000";
+const AUTH_TOKEN_KEY = "ff_admin_token";
+
+const PLAN_OPTIONS = [
+	{ label: "Monthly" },
+	{ label: "Quarterly" },
+	{ label: "Yearly" },
 ];
+
+const PLAN_PRICE_MAP = {
+	Monthly: 3000,
+	Quarterly: 7500,
+	Yearly: 24000,
+};
+
+function getToken() {
+	return localStorage.getItem(AUTH_TOKEN_KEY) || sessionStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+function formatMoney(value) {
+	const safeValue = Number(value || 0);
+	return `LKR ${safeValue.toLocaleString("en-LK")}`;
+}
+
+function formatDateText(value) {
+	if (!value) {
+		return "-";
+	}
+
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) {
+		return "-";
+	}
+
+	const year = date.getFullYear();
+	const month = String(date.getMonth() + 1).padStart(2, "0");
+	const day = String(date.getDate()).padStart(2, "0");
+	return `${year}-${month}-${day}`;
+}
+
+function getPlanDurationDays(plan) {
+	if (plan === "Quarterly") {
+		return 90;
+	}
+
+	if (plan === "Yearly") {
+		return 365;
+	}
+
+	return 30;
+}
+
+function calculateDueDateText(baseDate, plan) {
+	const parsedBaseDate = new Date(baseDate);
+	if (Number.isNaN(parsedBaseDate.getTime())) {
+		return "-";
+	}
+
+	const dueDate = new Date(parsedBaseDate);
+	dueDate.setDate(dueDate.getDate() + getPlanDurationDays(plan));
+	return formatDateText(dueDate);
+}
+
+function getMemberCreatedAtTime(member) {
+	const raw = member && member.createdAt ? member.createdAt : null;
+	const time = new Date(raw || 0).getTime();
+	return Number.isFinite(time) ? time : 0;
+}
+
+function createMemberId(member, maleCountRef, femaleCountRef) {
+	const providedId = String((member && member.id) || "").trim();
+	if (providedId) {
+		return providedId;
+	}
+
+	const gender = String((member && member.gender) || "").trim().toLowerCase();
+	if (gender === "female") {
+		femaleCountRef.current += 1;
+		return `F-${String(femaleCountRef.current).padStart(3, "0")}`;
+	}
+
+	maleCountRef.current += 1;
+	return `M-${String(maleCountRef.current).padStart(3, "0")}`;
+}
+
+function normalizeMemberPaymentRow(member, maleCountRef, femaleCountRef) {
+	const firstName = String((member && member.firstName) || "").trim();
+	const lastName = String((member && member.lastName) || "").trim();
+	const fullName = `${firstName} ${lastName}`.trim() || "Unknown Member";
+	const normalizedGender = String((member && member.gender) || "").trim().toLowerCase();
+	const plan = "Monthly";
+
+	return {
+		_id: String((member && member._id) || ""),
+		memberId: createMemberId(member, maleCountRef, femaleCountRef),
+		name: fullName,
+		gender: normalizedGender,
+		admissionFee: "Done",
+		plan,
+		amount: PLAN_PRICE_MAP[plan],
+		paymentDate: "-",
+		dueDate: calculateDueDateText(new Date(), plan),
+		status: "Pending",
+	};
+}
 
 const TRAINER_PAYMENTS = [
 	{
@@ -62,7 +135,7 @@ const TRAINER_PAYMENTS = [
 
 function StatusChip({ status, accent, accentBg }) {
 	const normalizedStatus = String(status || "").trim().toLowerCase();
-	const isDone = normalizedStatus === "done";
+	const isDone = normalizedStatus === "done" || normalizedStatus === "paid";
 	return (
 		<span
 			style={{
@@ -93,7 +166,27 @@ function StatusChip({ status, accent, accentBg }) {
 	);
 }
 
-function DataTable({ title, headers, rows, renderRow, accentBg }) {
+function DataTable({ title, headers, rows, renderRow, accentBg, getRowStyle }) {
+	const handleTableWheel = (event) => {
+		const container = event.currentTarget;
+		const deltaY = event.deltaY;
+
+		if (!container || !deltaY) {
+			return;
+		}
+
+		const isScrollingDown = deltaY > 0;
+		const isAtTop = container.scrollTop <= 0;
+		const isAtBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 1;
+		const canScrollInside = (isScrollingDown && !isAtBottom) || (!isScrollingDown && !isAtTop);
+
+		if (canScrollInside) {
+			event.preventDefault();
+			event.stopPropagation();
+			container.scrollTop += deltaY;
+		}
+	};
+
 	return (
 		<section
 			style={{
@@ -116,10 +209,13 @@ function DataTable({ title, headers, rows, renderRow, accentBg }) {
 				{title}
 			</div>
 
-			<div style={{ overflowX: "auto" }}>
-				<table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+			<div
+				onWheel={handleTableWheel}
+				style={{ overflow: "auto", maxHeight: 360 }}
+			>
+				<table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1120 }}>
 					<thead>
-						<tr>
+						<tr style={{ background: "#f8fafc" }}>
 							{headers.map((header) => (
 								<th
 									key={header}
@@ -131,6 +227,10 @@ function DataTable({ title, headers, rows, renderRow, accentBg }) {
 										padding: "12px 16px",
 										borderBottom: "1px solid #f1f5f9",
 										letterSpacing: 0.3,
+										position: "sticky",
+										top: 0,
+										zIndex: 1,
+										background: "#f8fafc",
 									}}
 								>
 									{header}
@@ -140,7 +240,7 @@ function DataTable({ title, headers, rows, renderRow, accentBg }) {
 					</thead>
 					<tbody>
 						{rows.map((row, index) => (
-							<tr key={index} style={{ borderBottom: "1px solid #f8fafc" }}>
+							<tr key={index} style={{ height: 52, borderBottom: "1px solid #f8fafc", ...(typeof getRowStyle === "function" ? getRowStyle(row) : {}) }}>
 								{renderRow(row)}
 							</tr>
 						))}
@@ -153,6 +253,163 @@ function DataTable({ title, headers, rows, renderRow, accentBg }) {
 
 export default function Payments({ accent = "#d5f165", accentBg = "#f4fcd9" }) {
 	const [activePaymentType, setActivePaymentType] = useState("members");
+	const [memberPayments, setMemberPayments] = useState([]);
+	const [membersLoading, setMembersLoading] = useState(true);
+	const [membersError, setMembersError] = useState("");
+	const memberTableHeaders = ["Member ID", "Member Name", "Admission", "Plan", "Amount", "Payment Date", "Due Date", "Status", "Update"];
+
+	const loadMemberPayments = useCallback(async () => {
+		setMembersLoading(true);
+		setMembersError("");
+
+		try {
+			const token = getToken();
+			if (!token) {
+				throw new Error("Please sign in again to load members");
+			}
+
+			const response = await fetch(`${API_BASE_URL}/api/members`, {
+				method: "GET",
+				headers: {
+					Authorization: `Bearer ${token}`,
+				},
+			});
+
+			const data = await response.json().catch(() => ({}));
+			if (!response.ok) {
+				throw new Error(data.message || "Failed to load members for payments");
+			}
+
+			const items = Array.isArray(data.items) ? data.items : [];
+			const orderedItems = [...items].sort((left, right) => getMemberCreatedAtTime(left) - getMemberCreatedAtTime(right));
+			const maleCountRef = { current: 0 };
+			const femaleCountRef = { current: 0 };
+			const rows = orderedItems.map((member) =>
+				normalizeMemberPaymentRow(member, maleCountRef, femaleCountRef)
+			);
+
+			setMemberPayments(rows);
+		} catch (error) {
+			setMembersError(error.message || "Failed to load members for payments");
+			setMemberPayments([]);
+		} finally {
+			setMembersLoading(false);
+		}
+	}, []);
+
+	useEffect(() => {
+		loadMemberPayments();
+	}, [loadMemberPayments]);
+
+	const handlePlanChange = (memberId, selectedPlan) => {
+		const nextAmount = PLAN_PRICE_MAP[selectedPlan] || 0;
+		setMemberPayments((prev) =>
+			prev.map((row) =>
+				row._id === memberId
+					? {
+						...row,
+						plan: selectedPlan,
+						amount: nextAmount,
+						dueDate: calculateDueDateText(
+							row.paymentDate && row.paymentDate !== "-" ? row.paymentDate : new Date(),
+							selectedPlan
+						),
+					}
+					: row
+			)
+		);
+	};
+
+	const handleMarkAsPaid = useCallback((memberId) => {
+		const todayText = formatDateText(new Date());
+
+		setMemberPayments((prev) =>
+			prev.map((row) =>
+				row._id === memberId
+					? {
+						...row,
+						paymentDate: todayText,
+						dueDate: calculateDueDateText(todayText, row.plan),
+						status: "Paid",
+					}
+					: row
+			)
+		);
+	}, []);
+
+	const maleMemberPayments = useMemo(
+		() => memberPayments.filter((item) => String(item.gender || "") !== "female"),
+		[memberPayments]
+	);
+
+	const femaleMemberPayments = useMemo(
+		() => memberPayments.filter((item) => String(item.gender || "") === "female"),
+		[memberPayments]
+	);
+
+	const renderMemberRow = useCallback((item) => (
+		<>
+			<td style={{ padding: "12px 16px", fontSize: 13, fontWeight: 700, color: "#111827" }}>{item.memberId}</td>
+			<td style={{ padding: "12px 16px", fontSize: 13, color: "#1f2937" }}>{item.name}</td>
+			<td style={{ padding: "12px 16px" }}><StatusChip status={item.admissionFee} accent={accent} accentBg={accentBg} /></td>
+			<td style={{ padding: "12px 16px", fontSize: 13, color: "#1f2937" }}>
+				<select
+					value={item.plan}
+					onChange={(event) => handlePlanChange(item._id, event.target.value)}
+					style={{
+						border: "1px solid #d1d5db",
+						borderRadius: 8,
+						padding: "6px 10px",
+						fontSize: 12.5,
+						fontWeight: 600,
+						color: "#0f172a",
+						background: "#fff",
+					}}
+				>
+					{PLAN_OPTIONS.map((option) => (
+						<option key={option.label} value={option.label}>
+							{option.label}
+						</option>
+					))}
+				</select>
+			</td>
+			<td style={{ padding: "12px 16px", fontSize: 13, fontWeight: 700, color: "#111827" }}>{formatMoney(item.amount)}</td>
+			<td style={{ padding: "12px 16px", fontSize: 13, color: "#4b5563" }}>{item.paymentDate}</td>
+			<td style={{ padding: "12px 16px", fontSize: 13, color: "#4b5563" }}>{item.dueDate}</td>
+			<td style={{ padding: "12px 16px" }}><StatusChip status={item.status} accent={accent} accentBg={accentBg} /></td>
+			<td style={{ padding: "12px 16px" }}>
+				<button
+					type="button"
+					onClick={() => handleMarkAsPaid(item._id)}
+					disabled={String(item.status || "").toLowerCase() === "paid"}
+					style={{
+						border: "none",
+						borderRadius: 8,
+						padding: "6px 10px",
+						fontSize: 12,
+						fontWeight: 700,
+						cursor: String(item.status || "").toLowerCase() === "paid" ? "not-allowed" : "pointer",
+						background: String(item.status || "").toLowerCase() === "paid" ? "#dcfce7" : "#1e293b",
+						color: String(item.status || "").toLowerCase() === "paid" ? "#166534" : "#ffffff",
+						opacity: String(item.status || "").toLowerCase() === "paid" ? 0.9 : 1,
+					}}
+				>
+					{String(item.status || "").toLowerCase() === "paid" ? "Paid" : "Mark as Paid"}
+				</button>
+			</td>
+		</>
+	), [accent, accentBg, handleMarkAsPaid]);
+
+	const getMemberRowStyle = useCallback((item) => {
+		const isPending = String((item && item.status) || "").trim().toLowerCase() === "pending";
+		if (!isPending) {
+			return {};
+		}
+
+		return {
+			animation: "pending-payment-blink 1s ease-in-out infinite",
+		};
+	}, []);
 
 	const activeConfig = useMemo(() => {
 		if (activePaymentType === "trainers") {
@@ -173,33 +430,26 @@ export default function Payments({ accent = "#d5f165", accentBg = "#f4fcd9" }) {
 			};
 		}
 
-		return {
-			title: "Members Payment",
-			headers: ["Member ID", "Member Name", "Admition Fee", "Plan", "Amount", "Payment Date", "Payment Due Date", "Status"],
-			rows: MEMBER_PAYMENTS,
-			renderRow: (item) => (
-				<>
-					<td style={{ padding: "12px 16px", fontSize: 13, fontWeight: 700, color: "#111827" }}>{item.memberId}</td>
-					<td style={{ padding: "12px 16px", fontSize: 13, color: "#1f2937" }}>{item.name}</td>
-					<td style={{ padding: "12px 16px" }}><StatusChip status={item.admissionFee} accent={accent} accentBg={accentBg} /></td>
-					<td style={{ padding: "12px 16px", fontSize: 13, color: "#1f2937" }}>{item.plan}</td>
-					<td style={{ padding: "12px 16px", fontSize: 13, fontWeight: 700, color: "#111827" }}>{item.amount}</td>
-					<td style={{ padding: "12px 16px", fontSize: 13, color: "#4b5563" }}>{item.paymentDate}</td>
-					<td style={{ padding: "12px 16px", fontSize: 13, color: "#4b5563" }}>{item.paymentDueDate}</td>
-					<td style={{ padding: "12px 16px" }}><StatusChip status={item.status} accent={accent} accentBg={accentBg} /></td>
-				</>
-			),
-		};
+		return null;
 	}, [activePaymentType, accent, accentBg]);
 
 	return (
 		<div style={{ display: "grid", gap: 16 }}>
+			<style>
+				{`@keyframes pending-payment-blink { 0%, 100% { background: #fff7ed; } 50% { background: #ffedd5; } }`}
+			</style>
 			<div>
 				<h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#111827" }}>Payments</h2>
 				<p style={{ margin: "6px 0 0", fontSize: 13, color: "#6b7280" }}>
-					Select Members or Trainers to view the relevant payment table.
+					Members table now loads registered members with fixed admission and selectable plans.
 				</p>
 			</div>
+
+			{activePaymentType === "members" && membersError ? (
+				<div style={{ background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", borderRadius: 10, padding: "10px 12px", fontWeight: 600, fontSize: 13 }}>
+					{membersError}
+				</div>
+			) : null}
 
 			<div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
 				<button
@@ -238,13 +488,47 @@ export default function Payments({ accent = "#d5f165", accentBg = "#f4fcd9" }) {
 				</button>
 			</div>
 
-			<DataTable
-				title={activeConfig.title}
-				headers={activeConfig.headers}
-				rows={activeConfig.rows}
-				accentBg={accentBg}
-				renderRow={activeConfig.renderRow}
-			/>
+			{activePaymentType === "members" && membersLoading ? (
+				<section
+					style={{
+						background: "#fff",
+						borderRadius: 16,
+						border: "1px solid #e5e7eb",
+						padding: "18px 16px",
+						fontWeight: 600,
+						color: "#64748b",
+					}}
+				>
+					Loading members payment table...
+				</section>
+			) : activePaymentType === "members" ? (
+				<div style={{ display: "grid", gap: 14 }}>
+					<DataTable
+						title="Male Members Payment"
+						headers={memberTableHeaders}
+						rows={maleMemberPayments}
+						accentBg={accentBg}
+						renderRow={renderMemberRow}
+						getRowStyle={getMemberRowStyle}
+					/>
+					<DataTable
+						title="Female Members Payment"
+						headers={memberTableHeaders}
+						rows={femaleMemberPayments}
+						accentBg={accentBg}
+						renderRow={renderMemberRow}
+						getRowStyle={getMemberRowStyle}
+					/>
+				</div>
+			) : (
+				<DataTable
+					title={activeConfig.title}
+					headers={activeConfig.headers}
+					rows={activeConfig.rows}
+					accentBg={accentBg}
+					renderRow={activeConfig.renderRow}
+				/>
+			)}
 		</div>
 	);
 }

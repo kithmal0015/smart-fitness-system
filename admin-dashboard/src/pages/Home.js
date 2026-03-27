@@ -1,10 +1,13 @@
 import { useState, useEffect, useMemo } from "react";
 import Header from "../components/Header";
 import Navbar from "../components/Navbar";
+import QRscaner from "../components/QRscaner";
 import Members from "./Members";
 import Trainers from "./Trainers";
 import Payments from "./Payments";
 import Settings from "./Settings";
+import Advertisements from "./Advertisements";
+import Attendance from "./Attendance";
 import totalMembersImage from "../assets/images/Total.png";
 import activeMembersImage from "../assets/images/Active.png";
 import lowMembersImage from "../assets/images/Low.png";
@@ -15,6 +18,7 @@ const AUTH_USER_KEY = "ff_admin_user";
 const SHOW_MEMBERS_SUMMARY_KEY = "ff_show_members_summary_cards";
 const SHOW_PARTICIPATION_CHART_KEY = "ff_show_participation_chart";
 const REMINDERS_STORAGE_KEY = "ff_dashboard_reminders";
+const MEMBER_NOTIFICATIONS_SEEN_KEY = "ff_seen_member_notification_ids";
 const LEGACY_REMINDER_TITLES = new Set([
   "eng-vocabulary test",
   "eng-essay",
@@ -86,6 +90,39 @@ function formatReminderDate(value) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function isReminderWithinTwoDays(value) {
+  const reminderDate = new Date(value);
+  if (Number.isNaN(reminderDate.getTime())) {
+    return false;
+  }
+
+  const now = new Date();
+  const diffMs = reminderDate.getTime() - now.getTime();
+  const twoDaysMs = 2 * 24 * 60 * 60 * 1000;
+  return diffMs >= 0 && diffMs <= twoDaysMs;
+}
+
+function loadSeenMemberNotificationIds() {
+  const raw = localStorage.getItem(MEMBER_NOTIFICATIONS_SEEN_KEY);
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .slice(0, 200);
+  } catch (_error) {
+    return [];
+  }
 }
 
 function getCurrentAdminFromStorage() {
@@ -168,9 +205,9 @@ function compressImageDataUrl(dataUrl, maxSize = 960, quality = 0.75) {
 
 // ── Data ───────────────────────────────────────────────────────────────────────
 const CLASSES = [
-  { id: 1, title: "Total Members", count: 1240, bg: "#9acd32" },
-  { id: 2, title: "Active Members", count: 986, bg: "#87ceeb" },
-  { id: 3, title: "Low Engagement Members", count: 254, bg: "#ffa07a" },
+  { id: 1, title: "Total Members", bg: "#9acd32" },
+  { id: 2, title: "Active Members", bg: "#87ceeb" },
+  { id: 3, title: "Low Engagement Members", bg: "#ffa07a" },
 ];
 
 const MONTH_OPTIONS = [
@@ -301,6 +338,10 @@ export default function LearnthruDashboard({ onLogout }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
   const [pendingRequestCount, setPendingRequestCount] = useState(0);
+  const [memberNotificationItems, setMemberNotificationItems] = useState([]);
+  const [seenMemberNotificationIds, setSeenMemberNotificationIds] = useState(() => loadSeenMemberNotificationIds());
+  const [focusedMemberId, setFocusedMemberId] = useState("");
+  const [totalMembersCount, setTotalMembersCount] = useState(0);
   const [currentAdminName, setCurrentAdminName] = useState("Admin User");
   const [currentAdminImage, setCurrentAdminImage] = useState("");
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
@@ -367,6 +408,52 @@ export default function LearnthruDashboard({ onLogout }) {
   }, []);
 
   useEffect(() => {
+    let isMounted = true;
+
+    const loadTotalMembersCount = async () => {
+      const token = getToken();
+      if (!token) {
+        if (isMounted) {
+          setTotalMembersCount(0);
+        }
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/members`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const data = await response.json().catch(() => ({}));
+        const items = Array.isArray(data.items) ? data.items : [];
+
+        if (isMounted) {
+          setTotalMembersCount(items.length);
+        }
+      } catch (_error) {
+        if (isMounted) {
+          setTotalMembersCount(0);
+        }
+      }
+    };
+
+    loadTotalMembersCount();
+    const pollTimer = setInterval(loadTotalMembersCount, 30000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(pollTimer);
+    };
+  }, []);
+
+  useEffect(() => {
     setShowMembersSummaryCards(readBooleanSetting(SHOW_MEMBERS_SUMMARY_KEY, true));
     setShowParticipationChart(readBooleanSetting(SHOW_PARTICIPATION_CHART_KEY, true));
   }, [activeNav]);
@@ -374,6 +461,13 @@ export default function LearnthruDashboard({ onLogout }) {
   useEffect(() => {
     localStorage.setItem(REMINDERS_STORAGE_KEY, JSON.stringify(reminders));
   }, [reminders]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      MEMBER_NOTIFICATIONS_SEEN_KEY,
+      JSON.stringify(seenMemberNotificationIds.slice(0, 200))
+    );
+  }, [seenMemberNotificationIds]);
 
   const handleOpenProfileModal = () => {
     setProfileError("");
@@ -538,6 +632,83 @@ export default function LearnthruDashboard({ onLogout }) {
     };
   }, []);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadMemberNotifications = async () => {
+      const token = getToken();
+      if (!token) {
+        if (isMounted) {
+          setMemberNotificationItems([]);
+        }
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/admin/member-notifications`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const data = await response.json().catch(() => ({}));
+        const items = Array.isArray(data.items) ? data.items : [];
+
+        if (isMounted) {
+          setMemberNotificationItems(items);
+        }
+      } catch (_error) {
+        if (isMounted) {
+          setMemberNotificationItems([]);
+        }
+      }
+    };
+
+    loadMemberNotifications();
+    const pollTimer = setInterval(loadMemberNotifications, 30000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(pollTimer);
+    };
+  }, []);
+
+  const latestMemberRegistration = memberNotificationItems[0] || null;
+  const newMemberRegistrationCount = useMemo(
+    () =>
+      memberNotificationItems.filter((item) => {
+        const itemId = String((item && item._id) || "").trim();
+        return itemId && !seenMemberNotificationIds.includes(itemId);
+      }).length,
+    [memberNotificationItems, seenMemberNotificationIds]
+  );
+
+  const handleNotificationsOpened = () => {
+    const currentIds = memberNotificationItems
+      .map((item) => String((item && item._id) || "").trim())
+      .filter(Boolean);
+
+    if (currentIds.length === 0) {
+      return;
+    }
+
+    setSeenMemberNotificationIds((prev) => {
+      const merged = Array.from(new Set([...prev, ...currentIds]));
+      return merged.slice(0, 200);
+    });
+  };
+
+  const handleOpenMembersFromNotifications = (memberId) => {
+    const normalizedMemberId = String(memberId || "").trim();
+    setFocusedMemberId(normalizedMemberId);
+    setActiveNav("members");
+  };
+
   const accent = "#d5f165";
   const accentDark = "#a8c42a";
   const accentBg = "#f4fcd9";
@@ -552,6 +723,14 @@ export default function LearnthruDashboard({ onLogout }) {
       return { day, participationValue };
     });
   }, [selectedParticipationMonth]);
+
+  const memberSummaryCards = useMemo(
+    () => CLASSES.map((cls) => ({
+      ...cls,
+      count: cls.id === 1 ? totalMembersCount : 0,
+    })),
+    [totalMembersCount]
+  );
 
   const peakParticipation = Math.max(...participationData.map((item) => item.participationValue), 1);
   const calendarYear = calendarCursorDate.getFullYear();
@@ -644,6 +823,17 @@ export default function LearnthruDashboard({ onLogout }) {
           padding: 10px 0; border-bottom: 1px solid #f3f4f6;
         }
         .reminder-item:last-child { border-bottom: none; }
+        .reminder-item.reminder-soon {
+          animation: reminder-blink 1s ease-in-out infinite;
+          border-radius: 10px;
+          padding: 10px;
+          margin: 0 -10px;
+          border-bottom-color: transparent;
+        }
+        @keyframes reminder-blink {
+          0%, 100% { background: #eefdc8; }
+          50% { background: #d5f165; }
+        }
 
         /* ── Drawers (mobile/tablet) ── */
         .overlay {
@@ -745,7 +935,11 @@ export default function LearnthruDashboard({ onLogout }) {
             setRightOpen={setRightOpen}
             accent={accent}
             pendingRequestCount={pendingRequestCount}
+            newMemberRegistrationCount={newMemberRegistrationCount}
+            latestMemberRegistration={latestMemberRegistration}
             onOpenAccessRequests={() => setActiveNav("settings-new-access")}
+            onOpenMembers={handleOpenMembersFromNotifications}
+            onNotificationsOpened={handleNotificationsOpened}
           />
 
           {/* Scroll area */}
@@ -756,11 +950,15 @@ export default function LearnthruDashboard({ onLogout }) {
 
             {/* Render Members page if Members, Male, or Female is selected */}
             {(activeNav === "members" || activeNav === "male" || activeNav === "female") ? (
-              <Members accent={accent} activeNav={activeNav} />
+              <Members accent={accent} activeNav={activeNav} focusedMemberId={focusedMemberId} />
             ) : (activeNav === "trainers" || activeNav === "trainers-male" || activeNav === "trainers-female") ? (
               <Trainers accent={accent} activeNav={activeNav} />
             ) : activeNav === "payment" ? (
               <Payments accent={accent} accentBg={accentBg} />
+            ) : activeNav === "attendance" ? (
+              <Attendance accent={accent} />
+            ) : activeNav === "advertisements" ? (
+              <Advertisements accent={accent} />
             ) : activeNav === "settings" || activeNav === "settings-dashboard" || activeNav === "settings-new-access" ? (
               <Settings
               accent={accent}
@@ -812,7 +1010,7 @@ export default function LearnthruDashboard({ onLogout }) {
                   <span style={{ fontSize: 16, fontWeight: 800, color: "#111827" }}>Members</span>
                 </div>
                 <div className="classes-grid">
-                  {CLASSES.map((cls) => (
+                  {memberSummaryCards.map((cls) => (
                     <div key={cls.id} className="class-card" style={{ background: cls.bg }}>
                       <div style={{ position: "absolute", right: -20, top: -20, width: 80, height: 80, borderRadius: "50%", background: "rgba(255,255,255,0.12)" }} />
                       <div style={{ position: "absolute", right: 10, bottom: -15, width: 50, height: 50, borderRadius: "50%", background: "rgba(255,255,255,0.08)" }} />
@@ -877,60 +1075,71 @@ export default function LearnthruDashboard({ onLogout }) {
 
             {/* Monthly Participation */}
             {showParticipationChart ? (
-              <div className="card s3" style={{ padding: isMobile ? "15px 13px" : "20px 22px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                  <span style={{ fontSize: 16, fontWeight: 800, color: "#111827" }}>Monthly Participation</span>
-                  <select
-                    value={selectedParticipationMonth}
-                    onChange={(event) => setSelectedParticipationMonth(Number(event.target.value))}
-                    style={{
-                      fontSize: 12.5,
-                      color: "#1f2937",
-                      background: accentBg,
-                      border: `1px solid ${accent}`,
-                      borderRadius: 8,
-                      padding: "6px 10px",
-                      fontWeight: 700,
-                      cursor: "pointer",
-                      fontFamily: "inherit",
-                    }}
-                  >
-                    {MONTH_OPTIONS.map((monthName, index) => (
-                      <option key={monthName} value={index}>{monthName}</option>
-                    ))}
-                  </select>
-                </div>
+              <div className="card s3" style={{ padding: isMobile ? "14px 12px" : "16px 16px" }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: isMobile ? "1fr" : "0.95fr 1.65fr",
+                    gap: 18,
+                    alignItems: "stretch",
+                  }}
+                >
+                  <QRscaner accent={accent} isMobile={isMobile} />
 
-                <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 12 }}>
-                  Daily participation count for {MONTH_OPTIONS[selectedParticipationMonth]} (Day 1 to Day {participationData.length})
-                </div>
+                  <div style={{ display: "flex", flexDirection: "column" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                      <span style={{ fontSize: 17, fontWeight: 900, color: "#111827", lineHeight: 1 }}>Monthly Participation</span>
+                      <select
+                        value={selectedParticipationMonth}
+                        onChange={(event) => setSelectedParticipationMonth(Number(event.target.value))}
+                        style={{
+                          fontSize: 11,
+                          color: "#1f2937",
+                          background: accentBg,
+                          border: `1px solid ${accent}`,
+                          borderRadius: 7,
+                          padding: "4px 7px",
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                        }}
+                      >
+                        {MONTH_OPTIONS.map((monthName, index) => (
+                          <option key={monthName} value={index}>{monthName}</option>
+                        ))}
+                      </select>
+                    </div>
 
-                <div style={{ overflowX: "auto", paddingBottom: 6 }}>
-                  <div style={{ minWidth: isMobile ? 760 : 920, display: "grid", gridTemplateColumns: `repeat(${participationData.length}, minmax(20px, 1fr))`, alignItems: "end", gap: 6, height: isMobile ? 210 : 250, padding: "10px 2px 0" }}>
-                    {participationData.map((item) => {
-                      const barHeight = Math.max(14, Math.round((item.participationValue / peakParticipation) * (isMobile ? 140 : 170)));
-                      return (
-                        <div key={item.day} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: "#64748b", lineHeight: 1 }}>
-                            {item.participationValue}
-                          </span>
-                          <div
-                            title={`Day ${item.day}: ${item.participationValue}`}
-                            style={{
-                              width: "100%",
-                              maxWidth: 22,
-                              height: barHeight,
-                              borderRadius: "8px 8px 4px 4px",
-                              background: `linear-gradient(180deg, ${accent} 0%, ${accentDark} 100%)`,
-                              boxShadow: "0 3px 9px rgba(168,196,42,0.28)",
-                            }}
-                          />
-                          <span style={{ fontSize: 10.5, color: "#6b7280", lineHeight: 1 }}>
-                            {item.day}
-                          </span>
-                        </div>
-                      );
-                    })}
+                    <div style={{ fontSize: 11.5, color: "#6b7280", marginBottom: 10 }}>
+                      Daily participation count for {MONTH_OPTIONS[selectedParticipationMonth]} (Day 1 to Day {participationData.length})
+                    </div>
+
+                    <div style={{ overflowX: "hidden", paddingBottom: 4, flex: 1 }}>
+                      <div style={{ minWidth: "100%", display: "grid", gridTemplateColumns: `repeat(${participationData.length}, minmax(0, 1fr))`, alignItems: "end", gap: 4, height: isMobile ? 190 : 235, padding: "8px 0 0" }}>
+                        {participationData.map((item) => {
+                          const barHeight = Math.max(12, Math.round((item.participationValue / peakParticipation) * (isMobile ? 124 : 162)));
+                          return (
+                            <div key={item.day} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                              <span style={{ fontSize: 9, fontWeight: 700, color: "#64748b", lineHeight: 1 }}>
+                                {item.participationValue}
+                              </span>
+                              <div
+                                title={`Day ${item.day}: ${item.participationValue}`}
+                                style={{
+                                  width: "100%",
+                                  maxWidth: 15,
+                                  height: barHeight,
+                                  borderRadius: "7px 7px 3px 3px",
+                                  background: `linear-gradient(180deg, ${accent} 0%, ${accentDark} 100%)`,
+                                  boxShadow: "0 2px 7px rgba(168,196,42,0.28)",
+                                }}
+                              />
+                              <span style={{ fontSize: 9, color: "#6b7280", lineHeight: 1 }}>{item.day}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1095,8 +1304,11 @@ export default function LearnthruDashboard({ onLogout }) {
               <div style={{ fontSize: 12, color: "#94a3b8", padding: "6px 0" }}>
                 No reminders yet. Use +Add to create one.
               </div>
-            ) : reminders.map((r, i) => (
-              <div key={i} className="reminder-item">
+            ) : reminders.map((r, i) => {
+              const isReminderSoon = isReminderWithinTwoDays(r.date);
+
+              return (
+              <div key={i} className={`reminder-item${isReminderSoon ? " reminder-soon" : ""}`}>
                 <div style={{ width: 32, height: 32, borderRadius: 9, background: accentBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14 }}>🔔</div>
                 {editingReminderIndex === i ? (
                   <div style={{ width: "100%", display: "grid", gap: 7 }}>
@@ -1133,6 +1345,11 @@ export default function LearnthruDashboard({ onLogout }) {
                   <div style={{ width: "100%" }}>
                     <div style={{ fontSize: 12.5, fontWeight: 700, color: "#111827" }}>{r.title}</div>
                     <div style={{ fontSize: 11.5, color: "#9ca3af" }}>{formatReminderDate(r.date)}</div>
+                    {isReminderSoon ? (
+                      <div style={{ marginTop: 4, fontSize: 11, fontWeight: 800, color: "#92400e" }}>
+                        Reminder: due within 2 days
+                      </div>
+                    ) : null}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 7, width: "100%" }}>
                       <button
                         type="button"
@@ -1152,7 +1369,7 @@ export default function LearnthruDashboard({ onLogout }) {
                   </div>
                 )}
               </div>
-            ))}
+            );})}
           </div>
         </aside>
 

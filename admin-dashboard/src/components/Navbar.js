@@ -9,6 +9,8 @@ import PaymentIcon from "@mui/icons-material/Payment";
 import AssignmentIcon from "@mui/icons-material/Assignment";
 import TimelineIcon from "@mui/icons-material/Timeline";
 import SummarizeIcon from "@mui/icons-material/Summarize";
+import CampaignIcon from "@mui/icons-material/Campaign";
+import EventAvailableIcon from "@mui/icons-material/EventAvailable";
 import SettingsIcon from "@mui/icons-material/Settings";
 import TuneIcon from '@mui/icons-material/Tune';
 import KeySharpIcon from '@mui/icons-material/KeySharp';
@@ -64,6 +66,8 @@ export default function Navbar({
 				{ id: "summary", label: "Summary", icon: SummarizeIcon },
 			],
 		},
+		{ id: "attendance", label: "Attendance", icon: EventAvailableIcon },
+		{ id: "advertisements", label: "Advertisements", icon: CampaignIcon },
 		{
 			id: "settings",
 			label: "Settings",

@@ -8,7 +8,11 @@ export default function Header({
   setRightOpen,
   accent,
   pendingRequestCount = 0,
+  newMemberRegistrationCount = 0,
+  latestMemberRegistration = null,
   onOpenAccessRequests,
+  onOpenMembers,
+  onNotificationsOpened,
 }) {
   const [now, setNow] = useState(new Date());
   const [showNotifications, setShowNotifications] = useState(false);
@@ -57,12 +61,31 @@ export default function Header({
   });
 
   const hasPendingRequests = pendingRequestCount > 0;
+  const hasNewMemberRegistrations = newMemberRegistrationCount > 0;
+  const totalNotificationCount = pendingRequestCount + newMemberRegistrationCount;
+
+  const toggleNotifications = () => {
+    setShowNotifications((prev) => !prev);
+  };
 
   const handleOpenNewAccess = () => {
     setShowNotifications(false);
 
     if (typeof onOpenAccessRequests === "function") {
       onOpenAccessRequests();
+    }
+  };
+
+  const handleOpenMembers = () => {
+    setShowNotifications(false);
+
+    if (typeof onNotificationsOpened === "function") {
+      onNotificationsOpened();
+    }
+
+    if (typeof onOpenMembers === "function") {
+      const memberId = String((latestMemberRegistration && latestMemberRegistration._id) || "").trim();
+      onOpenMembers(memberId || null);
     }
   };
 
@@ -128,7 +151,7 @@ export default function Header({
         <button
           type="button"
           aria-label="Notifications"
-          onClick={() => setShowNotifications((prev) => !prev)}
+          onClick={toggleNotifications}
           style={{
             width: 34,
             height: 34,
@@ -145,7 +168,7 @@ export default function Header({
           }}
         >
           <NotificationsActiveIcon sx={{ fontSize: 18 }} />
-          {hasPendingRequests ? (
+          {totalNotificationCount > 0 ? (
             <span
               style={{
                 position: "absolute",
@@ -163,7 +186,7 @@ export default function Header({
                 border: "1px solid #fff",
               }}
             >
-              {pendingRequestCount > 9 ? "9+" : pendingRequestCount}
+              {totalNotificationCount > 9 ? "9+" : totalNotificationCount}
             </span>
           ) : null}
         </button>
@@ -187,6 +210,36 @@ export default function Header({
               Notifications
             </div>
 
+            {hasNewMemberRegistrations ? (
+              <button
+                type="button"
+                onClick={handleOpenMembers}
+                style={{
+                  width: "100%",
+                  border: "1px solid #dcfce7",
+                  borderRadius: 10,
+                  background: "#f0fdf4",
+                  color: "#166534",
+                  padding: "10px 11px",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  lineHeight: 1.4,
+                  marginBottom: hasPendingRequests ? 8 : 0,
+                }}
+              >
+                {newMemberRegistrationCount} new member registration{newMemberRegistrationCount > 1 ? "s" : ""} received.
+                <div style={{ fontSize: 11, marginTop: 4, opacity: 0.9, fontWeight: 600 }}>
+                  You have a newly registered member
+                </div>
+                {latestMemberRegistration && latestMemberRegistration.fullName ? (
+                  <div style={{ fontSize: 11, marginTop: 2, opacity: 0.9 }}>
+                    Latest: {latestMemberRegistration.fullName}
+                  </div>
+                ) : null}
+              </button>
+            ) : null}
+
             {hasPendingRequests ? (
               <button
                 type="button"
@@ -206,7 +259,9 @@ export default function Header({
               >
                 {pendingRequestCount} new access request{pendingRequestCount > 1 ? "s" : ""} awaiting review.
               </button>
-            ) : (
+            ) : null}
+
+            {!hasPendingRequests && !hasNewMemberRegistrations ? (
               <div
                 style={{
                   border: "1px dashed #d1d5db",
@@ -219,7 +274,7 @@ export default function Header({
               >
                 No new notifications right now.
               </div>
-            )}
+            ) : null}
           </div>
         ) : null}
       </div>
