@@ -46,16 +46,20 @@ const smtpPass = normalizeEnv(process.env.SMTP_PASS);
 const smtpFrom = normalizeEnv(process.env.SMTP_FROM) || smtpUser;
 const accessReviewMailEnabled =
 	String(process.env.ACCESS_REVIEW_MAIL_ENABLED || 'true').toLowerCase() === 'true';
+const registerPaymentMailEnabled =
+	String(process.env.REGISTER_PAYMENT_MAIL_ENABLED || 'true').toLowerCase() === 'true';
 
 const adminUserName = process.env.ADMIN_USERNAME || 'Kithmal0015';
 const adminPasswordFromEnv = process.env.ADMIN_PASSWORD || '12345';
 let adminPasswordHash =
 	process.env.ADMIN_PASSWORD_HASH || bcrypt.hashSync(adminPasswordFromEnv, 10);
 let activeResetToken = null;
+let activeMobileResetOtp = null;
 let mailTransporter = null;
 const trainerImageFallback = 'https://via.placeholder.com/40';
 
 const corsOrigin = process.env.ADMIN_DASHBOARD_ORIGIN || 'http://localhost:3000';
+const advertisementStaticDir = path.join(__dirname, 'data', 'ads');
 
 app.use(
 	cors({
@@ -64,6 +68,7 @@ app.use(
 	})
 );
 app.use(express.json({ limit: '10mb' }));
+app.use('/static/ads', express.static(advertisementStaticDir));
 
 let accessRequestStore = null;
 
@@ -249,6 +254,102 @@ mobileUserSchema.index({ email: 1 }, { unique: true });
 const MobileUser =
 	mongoose.models.MobileUser || mongoose.model('MobileUser', mobileUserSchema, 'users');
 
+const advertisementSchema = new mongoose.Schema(
+	{
+		title: {
+			type: String,
+			required: true,
+			trim: true,
+		},
+		subtitle: {
+			type: String,
+			default: '',
+			trim: true,
+		},
+		image: {
+			type: String,
+			required: true,
+		},
+		displayOrder: {
+			type: Number,
+			default: 0,
+		},
+		isActive: {
+			type: Boolean,
+			default: true,
+		},
+	},
+	{
+		timestamps: true,
+	}
+);
+
+advertisementSchema.index({ isActive: 1, displayOrder: 1, updatedAt: -1 });
+
+const Advertisement =
+	mongoose.models.Advertisement ||
+	mongoose.model('Advertisement', advertisementSchema, 'advertisements');
+
+function toAdvertisementResponseItem(item) {
+	return toAdvertisementResponseItemForRequest(item, null);
+}
+
+function toAdvertisementResponseItemForRequest(item, req) {
+	if (!item) {
+		return null;
+	}
+
+	const rawImage = String(item.image || '').trim();
+	const image =
+		req && rawImage.startsWith('/')
+			? `${req.protocol}://${req.get('host')}${rawImage}`
+			: rawImage;
+
+	return {
+		_id: String(item._id),
+		title: String(item.title || '').trim(),
+		subtitle: String(item.subtitle || '').trim(),
+		image,
+		displayOrder: Number(item.displayOrder || 0),
+		isActive: Boolean(item.isActive),
+		createdAt: item.createdAt || null,
+		updatedAt: item.updatedAt || null,
+	};
+}
+
+async function seedDefaultAdvertisementsIfEmpty() {
+	const count = await Advertisement.countDocuments({});
+	if (count > 0) {
+		return;
+	}
+
+	const defaults = [
+		{
+			title: 'New Year Table',
+			subtitle: 'New Year Table Event. See you on Apr 14, 2026, at 08:30 AM at the gym!',
+			image: '/static/ads/ad-1.jpg',
+			displayOrder: 1,
+			isActive: true,
+		},
+		{
+			title: 'Cricket Match',
+			subtitle: 'The event is scheduled for April 22, 2026, at 9:00 AM, and will be held at Saniro, Veyangoda.',
+			image: '/static/ads/ad-2.jpg',
+			displayOrder: 2,
+			isActive: true,
+		},
+		{
+			title: 'New Packages',
+			subtitle: 'Introductory Membership Packages with New Member Special Offers',
+			image: '/static/ads/ad-3.jpg',
+			displayOrder: 3,
+			isActive: true,
+		},
+	];
+
+	await Advertisement.insertMany(defaults);
+}
+
 function toTrainerResponseItem(item) {
 	if (!item) {
 		return null;
@@ -340,6 +441,23 @@ function toMobileMemberResponseItem(item) {
 	};
 }
 
+function toMemberNotificationItem(item) {
+	if (!item) {
+		return null;
+	}
+
+	const firstName = String(item.firstName || '').trim();
+	const lastName = String(item.lastName || '').trim();
+	const fullName = `${firstName} ${lastName}`.trim();
+
+	return {
+		_id: String(item._id),
+		fullName: fullName || 'New Member',
+		email: String(item.email || '').trim().toLowerCase(),
+		createdAt: item.createdAt || null,
+	};
+}
+
 function isMailConfigured() {
 	return Boolean(smtpHost && smtpPort && smtpUser && smtpPass);
 }
@@ -420,6 +538,81 @@ async function sendAccessReviewEmail({ to, userName, action, rejectReason, revie
 	}
 }
 
+async function sendMobileResetOtpEmail({ to, firstName, otp, expiresInMinutes }) {
+	if (!isMailConfigured()) {
+		return { sent: false, reason: 'smtp-not-configured' };
+	}
+
+	const subject = 'Smart Fitness password reset OTP';
+	const textLines = [
+		`Hi ${firstName || 'Member'},`,
+		'',
+		'We received a request to reset your password.',
+		`Your OTP code is: ${otp}`,
+		`This OTP will expire in ${expiresInMinutes} minutes.`,
+		'',
+		'If you did not request this, please ignore this email.',
+		'',
+		'Smart Fitness Team',
+	];
+
+	try {
+		await getMailTransporter().sendMail({
+			from: smtpFrom,
+			to,
+			subject,
+			text: textLines.join('\n'),
+		});
+
+		return { sent: true };
+	} catch (_error) {
+		return { sent: false, reason: 'send-failed' };
+	}
+}
+
+async function sendRegisterPaymentSuccessEmail({ to, firstName, paidAmount, currency }) {
+	if (!registerPaymentMailEnabled) {
+		return { sent: false, reason: 'mail-disabled' };
+	}
+
+	if (!isMailConfigured()) {
+		console.warn('Register/payment success email skipped: SMTP settings are incomplete');
+		return { sent: false, reason: 'smtp-not-configured' };
+	}
+
+	const amount = Number.isFinite(Number(paidAmount)) ? Number(paidAmount) : null;
+	const amountLine =
+		amount === null
+			? 'Payment status: Successful'
+			: `Payment amount: ${String(currency || 'LKR').toUpperCase()} ${amount.toFixed(2)}`;
+
+	const subject = 'Smart Fitness registration and payment successful';
+	const textLines = [
+		`Hi ${firstName || 'Member'},`,
+		'',
+		'Your registration has been completed successfully.',
+		'Your payment was processed successfully.',
+		amountLine,
+		'',
+		'You can now sign in and start using Smart Fitness.',
+		'',
+		'Smart Fitness Team',
+	];
+
+	try {
+		await getMailTransporter().sendMail({
+			from: smtpFrom,
+			to,
+			subject,
+			text: textLines.join('\n'),
+		});
+
+		return { sent: true };
+	} catch (_error) {
+		return { sent: false, reason: 'send-failed' };
+	}
+}
+
 function requireAdminAuth(req, res, next) {
 	try {
 		const authHeader = req.headers.authorization || '';
@@ -435,6 +628,27 @@ function requireAdminAuth(req, res, next) {
 		}
 
 		req.admin = decoded;
+		return next();
+	} catch (_error) {
+		return res.status(401).json({ message: 'Invalid or expired token' });
+	}
+}
+
+function requireMemberAuth(req, res, next) {
+	try {
+		const authHeader = req.headers.authorization || '';
+		const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+
+		if (!token) {
+			return res.status(401).json({ message: 'Missing token' });
+		}
+
+		const decoded = jwt.verify(token, jwtSecret);
+		if (!decoded || decoded.role !== 'member' || !decoded.memberId) {
+			return res.status(403).json({ message: 'Member access required' });
+		}
+
+		req.member = decoded;
 		return next();
 	} catch (_error) {
 		return res.status(401).json({ message: 'Invalid or expired token' });
@@ -730,6 +944,21 @@ app.get('/api/health', (_req, res) => {
 	res.json({ ok: true, service: 'smart-fitness-backend' });
 });
 
+app.get('/api/mobile/advertisements', async (_req, res) => {
+	try {
+		const items = await Advertisement.find({ isActive: true })
+			.sort({ displayOrder: 1, updatedAt: -1 })
+			.limit(20)
+			.lean();
+
+		return res.status(200).json({
+			items: items.map((item) => toAdvertisementResponseItemForRequest(item, _req)).filter(Boolean),
+		});
+	} catch (_error) {
+		return res.status(500).json({ message: 'Failed to load advertisements' });
+	}
+});
+
 app.post('/api/mobile/register-and-pay', async (req, res) => {
 	try {
 		const {
@@ -830,6 +1059,19 @@ app.post('/api/mobile/register-and-pay', async (req, res) => {
 			},
 		});
 
+		const registerPaymentMailResult = await sendRegisterPaymentSuccessEmail({
+			to: created.email,
+			firstName: created.firstName,
+			paidAmount: created.payment && created.payment.totalAmount,
+			currency: created.payment && created.payment.currency,
+		});
+
+		if (!registerPaymentMailResult.sent && registerPaymentMailResult.reason !== 'mail-disabled') {
+			console.warn(
+				`Register/payment success email not sent for ${created.email}: ${registerPaymentMailResult.reason}`
+			);
+		}
+
 		return res.status(201).json({
 			message: 'User account created and payment recorded successfully',
 			item: {
@@ -837,6 +1079,7 @@ app.post('/api/mobile/register-and-pay', async (req, res) => {
 				email: created.email,
 				membershipStatus: created.membership && created.membership.status,
 				paidAmount: created.payment && created.payment.totalAmount,
+				emailNotificationSent: Boolean(registerPaymentMailResult.sent),
 			},
 		});
 	} catch (error) {
@@ -848,6 +1091,401 @@ app.post('/api/mobile/register-and-pay', async (req, res) => {
 	}
 });
 
+app.post('/api/mobile/login', async (req, res) => {
+	try {
+		const email = String((req.body && req.body.email) || '').trim().toLowerCase();
+		const password = String((req.body && req.body.password) || '');
+
+		if (!email || !password) {
+			return res.status(400).json({ message: 'Email and password are required' });
+		}
+
+		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+			return res.status(400).json({ message: 'Enter a valid email' });
+		}
+
+		const member = await MobileUser.findOne({ email }).lean();
+		if (!member) {
+			return res.status(401).json({ message: 'Invalid email or password' });
+		}
+
+		const isPasswordValid = await bcrypt.compare(password, String(member.passwordHash || ''));
+		if (!isPasswordValid) {
+			return res.status(401).json({ message: 'Invalid email or password' });
+		}
+
+		const memberId = String(member._id);
+		const token = jwt.sign(
+			{
+				sub: `member-${memberId}`,
+				role: 'member',
+				memberId,
+				email,
+			},
+			jwtSecret,
+			{ expiresIn: tokenExpiry }
+		);
+
+		return res.status(200).json({
+			message: 'Sign in successful',
+			token,
+			item: toMobileMemberResponseItem(member),
+		});
+	} catch (_error) {
+		return res.status(500).json({ message: 'Sign in failed. Please try again.' });
+	}
+});
+
+app.put('/api/mobile/profile', requireMemberAuth, async (req, res) => {
+	try {
+		const memberId = String((req.member && req.member.memberId) || '').trim();
+		if (!mongoose.isValidObjectId(memberId)) {
+			return res.status(400).json({ message: 'Invalid member id' });
+		}
+
+		const firstName = String((req.body && req.body.firstName) || '').trim();
+		const lastName = String((req.body && req.body.lastName) || '').trim();
+		const profileImage = String((req.body && req.body.profileImage) || '').trim();
+
+		if (!firstName || !lastName) {
+			return res.status(400).json({ message: 'First name and last name are required' });
+		}
+
+		if (profileImage && !profileImage.startsWith('data:image/') && !/^https?:\/\//i.test(profileImage)) {
+			return res.status(400).json({ message: 'Profile image format is invalid' });
+		}
+
+		const updated = await MobileUser.findByIdAndUpdate(
+			memberId,
+			{
+				$set: {
+					firstName,
+					lastName,
+					...(profileImage ? { profileImage } : {}),
+				},
+			},
+			{ new: true, runValidators: true }
+		).lean();
+
+		if (!updated) {
+			return res.status(404).json({ message: 'Member not found' });
+		}
+
+		return res.status(200).json({
+			message: 'Profile updated successfully',
+			item: toMobileMemberResponseItem(updated),
+		});
+	} catch (_error) {
+		return res.status(500).json({ message: 'Failed to update profile' });
+	}
+});
+
+app.post('/api/mobile/forgot-password', async (req, res) => {
+	try {
+		const email = String((req.body && req.body.email) || '').trim().toLowerCase();
+
+		if (!email) {
+			return res.status(400).json({ message: 'Email is required' });
+		}
+
+		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+			return res.status(400).json({ message: 'Enter a valid email' });
+		}
+
+		const genericMessage =
+			'If the account exists, an OTP has been generated for password reset.';
+
+		const member = await MobileUser.findOne({ email }).lean();
+		if (!member) {
+			return res.status(200).json({ message: genericMessage });
+		}
+
+		const otpCode = String(crypto.randomInt(100000, 1000000));
+		const expiresAt = Date.now() + resetTokenExpiryMinutes * 60 * 1000;
+
+		activeMobileResetOtp = {
+			otp: otpCode,
+			email,
+			expiresAt,
+		};
+
+		const emailResult = await sendMobileResetOtpEmail({
+			to: email,
+			firstName: String(member.firstName || '').trim(),
+			otp: otpCode,
+			expiresInMinutes: resetTokenExpiryMinutes,
+		});
+
+		if (!emailResult.sent) {
+			if (emailResult.reason === 'smtp-not-configured') {
+				return res.status(503).json({ message: 'OTP email service is not configured' });
+			}
+
+			return res.status(500).json({ message: 'Failed to send OTP email' });
+		}
+
+		return res.status(200).json({
+			message: genericMessage,
+		});
+	} catch (_error) {
+		return res.status(500).json({ message: 'Unable to process forgot password request' });
+	}
+});
+
+app.post('/api/mobile/reset-password', async (req, res) => {
+	try {
+		const otp = String((req.body && req.body.otp) || '').trim();
+		const email = String((req.body && req.body.email) || '').trim().toLowerCase();
+		const newPassword = String((req.body && req.body.newPassword) || '');
+		const confirmPassword = String((req.body && req.body.confirmPassword) || '');
+
+		if (!otp || !email || !newPassword || !confirmPassword) {
+			return res.status(400).json({ message: 'Email, OTP, and password fields are required' });
+		}
+
+		if (!/^\d{6}$/.test(otp)) {
+			return res.status(400).json({ message: 'OTP must be a 6-digit code' });
+		}
+
+		if (newPassword !== confirmPassword) {
+			return res.status(400).json({ message: 'Passwords do not match' });
+		}
+
+		const strongPasswordRegex = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
+		if (!strongPasswordRegex.test(newPassword)) {
+			return res.status(400).json({ message: 'Use 8+ characters with letters, numbers, and symbols' });
+		}
+
+		if (!activeMobileResetOtp || otp !== activeMobileResetOtp.otp) {
+			return res.status(400).json({ message: 'Invalid OTP' });
+		}
+
+		if (email !== activeMobileResetOtp.email) {
+			return res.status(400).json({ message: 'OTP does not match this email' });
+		}
+
+		if (Date.now() > activeMobileResetOtp.expiresAt) {
+			activeMobileResetOtp = null;
+			return res.status(400).json({ message: 'OTP has expired' });
+		}
+
+		const member = await MobileUser.findOne({ email }).lean();
+		if (!member) {
+			activeMobileResetOtp = null;
+			return res.status(400).json({ message: 'Account is not eligible for password reset' });
+		}
+
+		const newPasswordHash = await bcrypt.hash(newPassword, 10);
+		await MobileUser.updateOne({ _id: member._id }, { $set: { passwordHash: newPasswordHash } });
+
+		activeMobileResetOtp = null;
+
+		return res.status(200).json({ message: 'Password updated successfully' });
+	} catch (_error) {
+		return res.status(500).json({ message: 'Failed to reset password' });
+	}
+});
+
+app.get('/api/admin/member-notifications', requireAdminAuth, async (_req, res) => {
+	try {
+		const recentMembers = await MobileUser.find({})
+			.select({ firstName: 1, lastName: 1, email: 1, createdAt: 1 })
+			.sort({ createdAt: -1 })
+			.limit(20)
+			.lean();
+
+		return res.status(200).json({
+			items: recentMembers.map(toMemberNotificationItem).filter(Boolean),
+		});
+	} catch (_error) {
+		return res.status(500).json({ message: 'Failed to load member notifications' });
+	}
+});
+
+app.get('/api/admin/advertisements', requireAdminAuth, async (_req, res) => {
+	try {
+		const items = await Advertisement.find({})
+			.sort({ displayOrder: 1, updatedAt: -1 })
+			.lean();
+
+		return res.status(200).json({
+			items: items.map((item) => toAdvertisementResponseItemForRequest(item, _req)).filter(Boolean),
+		});
+	} catch (_error) {
+		return res.status(500).json({ message: 'Failed to load advertisements' });
+	}
+});
+
+app.post('/api/admin/advertisements', requireAdminAuth, async (req, res) => {
+	try {
+		const title = String((req.body && req.body.title) || '').trim();
+		const subtitle = String((req.body && req.body.subtitle) || '').trim();
+		const image = String((req.body && req.body.image) || '').trim();
+		const displayOrder = Number((req.body && req.body.displayOrder) || 0);
+		const isActive = (req.body && typeof req.body.isActive === 'boolean') ? req.body.isActive : true;
+
+		if (!title || !image) {
+			return res.status(400).json({ message: 'Title and image are required' });
+		}
+
+		const created = await Advertisement.create({
+			title,
+			subtitle,
+			image,
+			displayOrder: Number.isFinite(displayOrder) ? displayOrder : 0,
+			isActive,
+		});
+
+		return res.status(201).json({
+			message: 'Advertisement created successfully',
+			item: toAdvertisementResponseItemForRequest(created, req),
+		});
+	} catch (_error) {
+		return res.status(500).json({ message: 'Failed to create advertisement' });
+	}
+});
+
+app.put('/api/admin/advertisements/:id', requireAdminAuth, async (req, res) => {
+	try {
+		const advertisementId = String(req.params.id || '').trim();
+		if (!mongoose.isValidObjectId(advertisementId)) {
+			return res.status(400).json({ message: 'Invalid advertisement id' });
+		}
+
+		const title = String((req.body && req.body.title) || '').trim();
+		const subtitle = String((req.body && req.body.subtitle) || '').trim();
+		const image = String((req.body && req.body.image) || '').trim();
+		const displayOrder = Number((req.body && req.body.displayOrder) || 0);
+		const isActive = (req.body && typeof req.body.isActive === 'boolean') ? req.body.isActive : true;
+
+		if (!title || !image) {
+			return res.status(400).json({ message: 'Title and image are required' });
+		}
+
+		const updated = await Advertisement.findByIdAndUpdate(
+			advertisementId,
+			{
+				$set: {
+					title,
+					subtitle,
+					image,
+					displayOrder: Number.isFinite(displayOrder) ? displayOrder : 0,
+					isActive,
+				},
+			},
+			{ new: true }
+		).lean();
+
+		if (!updated) {
+			return res.status(404).json({ message: 'Advertisement not found' });
+		}
+
+		return res.status(200).json({
+			message: 'Advertisement updated successfully',
+			item: toAdvertisementResponseItemForRequest(updated, req),
+		});
+	} catch (_error) {
+		return res.status(500).json({ message: 'Failed to update advertisement' });
+	}
+});
+
+app.delete('/api/admin/advertisements/:id', requireAdminAuth, async (req, res) => {
+	try {
+		const advertisementId = String(req.params.id || '').trim();
+		if (!mongoose.isValidObjectId(advertisementId)) {
+			return res.status(400).json({ message: 'Invalid advertisement id' });
+		}
+
+		const deleted = await Advertisement.findByIdAndDelete(advertisementId).lean();
+		if (!deleted) {
+			return res.status(404).json({ message: 'Advertisement not found' });
+		}
+
+		return res.status(200).json({
+			message: 'Advertisement deleted successfully',
+			item: toAdvertisementResponseItemForRequest(deleted, req),
+		});
+	} catch (_error) {
+		return res.status(500).json({ message: 'Failed to delete advertisement' });
+	}
+});
+
+app.post('/api/members', requireAdminAuth, async (req, res) => {
+	try {
+		const firstName = String((req.body && req.body.firstName) || '').trim();
+		const lastName = String((req.body && req.body.lastName) || '').trim();
+		const email = String((req.body && req.body.email) || '').trim().toLowerCase();
+		const gender = String((req.body && req.body.gender) || '').trim();
+		const dobRaw = String((req.body && req.body.dob) || '').trim();
+		const password = String((req.body && req.body.password) || '');
+		const profileImage = String((req.body && req.body.profileImage) || '').trim();
+
+		if (!firstName || !lastName || !email || !gender || !dobRaw || !password) {
+			return res.status(400).json({
+				message:
+					'First name, last name, email, gender, date of birth, and password are required',
+			});
+		}
+
+		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+			return res.status(400).json({ message: 'Enter a valid email address' });
+		}
+
+		if (gender !== 'Male' && gender !== 'Female') {
+			return res.status(400).json({ message: 'Gender must be Male or Female' });
+		}
+
+		const parsedDob = new Date(dobRaw);
+		if (Number.isNaN(parsedDob.getTime())) {
+			return res.status(400).json({ message: 'Date of birth is invalid' });
+		}
+
+		const strongPasswordRegex = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
+		if (!strongPasswordRegex.test(password)) {
+			return res.status(400).json({
+				message: 'Use 8+ characters with letters, numbers, and symbols',
+			});
+		}
+
+		const passwordHash = await bcrypt.hash(password, 10);
+
+		const createdMember = await MobileUser.create({
+			firstName,
+			lastName,
+			email,
+			passwordHash,
+			gender,
+			dateOfBirth: parsedDob,
+			profileImage,
+			membership: {
+				status: 'active',
+				activatedAt: new Date(),
+			},
+			payment: {
+				admissionFee: 0,
+				monthFee: 0,
+				totalAmount: 0,
+				currency: 'LKR',
+				method: 'admin-manual',
+				cardLast4: '',
+				paidAt: new Date(),
+				termsAccepted: true,
+			},
+		});
+
+		return res.status(201).json({
+			message: 'Member added successfully',
+			item: toMobileMemberResponseItem(createdMember),
+		});
+	} catch (error) {
+		if (error && error.code === 11000) {
+			return res.status(409).json({ message: 'An account with this email already exists' });
+		}
+
+		return res.status(500).json({ message: 'Failed to add member' });
+	}
+});
+
 app.get('/api/members', requireAdminAuth, async (_req, res) => {
 	try {
 		const members = await MobileUser.find({}).sort({ createdAt: -1 }).lean();
@@ -856,6 +1494,105 @@ app.get('/api/members', requireAdminAuth, async (_req, res) => {
 		});
 	} catch (_error) {
 		return res.status(500).json({ message: 'Failed to load members' });
+	}
+});
+
+app.get('/api/members/:id', requireAdminAuth, async (req, res) => {
+	try {
+		const memberId = String(req.params.id || '').trim();
+		if (!mongoose.isValidObjectId(memberId)) {
+			return res.status(400).json({ message: 'Invalid member id' });
+		}
+
+		const member = await MobileUser.findById(memberId).lean();
+		if (!member) {
+			return res.status(404).json({ message: 'Member not found' });
+		}
+
+		return res.status(200).json({ item: toMobileMemberResponseItem(member) });
+	} catch (_error) {
+		return res.status(500).json({ message: 'Failed to load member details' });
+	}
+});
+
+app.put('/api/members/:id', requireAdminAuth, async (req, res) => {
+	try {
+		const memberId = String(req.params.id || '').trim();
+		if (!mongoose.isValidObjectId(memberId)) {
+			return res.status(400).json({ message: 'Invalid member id' });
+		}
+
+		const firstName = String((req.body && req.body.firstName) || '').trim();
+		const lastName = String((req.body && req.body.lastName) || '').trim();
+		const email = String((req.body && req.body.email) || '').trim().toLowerCase();
+		const gender = String((req.body && req.body.gender) || '').trim();
+		const dobRaw = String((req.body && req.body.dob) || '').trim();
+		const profileImage = String((req.body && req.body.profileImage) || '').trim();
+
+		if (!firstName || !lastName || !email || !gender || !dobRaw) {
+			return res.status(400).json({ message: 'First name, last name, email, gender, and date of birth are required' });
+		}
+
+		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+			return res.status(400).json({ message: 'Enter a valid email address' });
+		}
+
+		if (gender !== 'Male' && gender !== 'Female') {
+			return res.status(400).json({ message: 'Gender must be Male or Female' });
+		}
+
+		const parsedDob = new Date(dobRaw);
+		if (Number.isNaN(parsedDob.getTime())) {
+			return res.status(400).json({ message: 'Date of birth is invalid' });
+		}
+
+		const updatedMember = await MobileUser.findByIdAndUpdate(
+			memberId,
+			{
+				$set: {
+					firstName,
+					lastName,
+					email,
+					gender,
+					dateOfBirth: parsedDob,
+					...(profileImage ? { profileImage } : {}),
+				},
+			},
+			{ new: true, runValidators: true }
+		).lean();
+
+		if (!updatedMember) {
+			return res.status(404).json({ message: 'Member not found' });
+		}
+
+		return res.status(200).json({
+			message: 'Member updated successfully',
+			item: toMobileMemberResponseItem(updatedMember),
+		});
+	} catch (error) {
+		if (error && error.code === 11000) {
+			return res.status(409).json({ message: 'An account with this email already exists' });
+		}
+
+		return res.status(500).json({ message: 'Failed to update member' });
+	}
+});
+
+app.delete('/api/members/:id', requireAdminAuth, async (req, res) => {
+	try {
+		const memberId = String(req.params.id || '').trim();
+		if (!mongoose.isValidObjectId(memberId)) {
+			return res.status(400).json({ message: 'Invalid member id' });
+		}
+
+		const deletedMember = await MobileUser.findByIdAndDelete(memberId).lean();
+		if (!deletedMember) {
+			return res.status(404).json({ message: 'Member not found' });
+		}
+
+		return res.status(200).json({ message: 'Member deleted successfully' });
+	} catch (_error) {
+		return res.status(500).json({ message: 'Failed to delete member' });
 	}
 });
 
@@ -1474,6 +2211,8 @@ async function startServer() {
 
 		await mongoose.connect(mongoUri);
 		console.log('MongoDB connected');
+
+		await seedDefaultAdvertisementsIfEmpty();
 
 		accessRequestStore = await initializeAccessRequestStore();
 
