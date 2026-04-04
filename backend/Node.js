@@ -22,6 +22,10 @@ const allowStartWithoutMongo = String(process.env.ALLOW_START_WITHOUT_MONGO || '
 const jwtSecret = process.env.JWT_SECRET || 'change-this-secret';
 const tokenExpiry = '8h';
 const resetTokenExpiryMinutes = Number(process.env.RESET_TOKEN_EXP_MINUTES || 15);
+const defaultAdminUserName = process.env.ADMIN_USERNAME || 'Kithmal0015';
+const defaultAdminPassword = process.env.ADMIN_PASSWORD || 'Kithmalhnc@8082';
+const defaultAdminEmail =
+	process.env.ADMIN_EMAIL || 'kithmaltharinda7078@gmail.com';
 function normalizeEnv(value) {
 	const raw = String(value || '').trim();
 	if (!raw) {
@@ -48,15 +52,79 @@ const accessReviewMailEnabled =
 	String(process.env.ACCESS_REVIEW_MAIL_ENABLED || 'true').toLowerCase() === 'true';
 const registerPaymentMailEnabled =
 	String(process.env.REGISTER_PAYMENT_MAIL_ENABLED || 'true').toLowerCase() === 'true';
+const trainerPaymentMailEnabled =
+	String(process.env.TRAINER_PAYMENT_MAIL_ENABLED || 'true').toLowerCase() === 'true';
 
-const adminUserName = process.env.ADMIN_USERNAME || 'Kithmal0015';
-const adminPasswordFromEnv = process.env.ADMIN_PASSWORD || '12345';
-let adminPasswordHash =
-	process.env.ADMIN_PASSWORD_HASH || bcrypt.hashSync(adminPasswordFromEnv, 10);
-let activeResetToken = null;
 let activeMobileResetOtp = null;
 let mailTransporter = null;
 const trainerImageFallback = 'https://via.placeholder.com/40';
+const trainerRoleOptions = ['Strength Coach', 'Yoga Instructor', 'Cardio Trainer'];
+const fitnessGoalOptions = ['Fat Burning', 'Muscle Gain', 'Yoga'];
+
+function getTrainerMonthlySalaryByRole(role) {
+	const normalizedRole = String(role || '').trim().toLowerCase();
+
+	if (normalizedRole === 'strength coach' || normalizedRole === 'strength instructor') {
+		return 55000;
+	}
+
+	if (normalizedRole === 'yoga instructor') {
+		return 45000;
+	}
+
+	if (normalizedRole === 'cardio trainer' || normalizedRole === 'cardio instructor' || normalizedRole === 'cradio instructr') {
+		return 50000;
+	}
+
+	return 0;
+}
+
+function normalizeTrainerId(input) {
+	const raw = String(input || '').trim().toUpperCase();
+	if (!raw) {
+		return '';
+	}
+
+	const collapsed = raw.replace(/\s+/g, '');
+	const modernMatch = collapsed.match(/^([MF])T-?([0-9O]+)$/);
+	if (modernMatch) {
+		const prefix = modernMatch[1] === 'F' ? 'FT' : 'MT';
+		const normalizedDigits = String(modernMatch[2]).replace(/O/g, '0');
+		return `${prefix}-${String(Number(normalizedDigits) || 0).padStart(3, '0')}`;
+	}
+
+	// Backward compatibility: T-M005 / T-F005 -> MT-005 / FT-005
+	const legacyMatch = collapsed.match(/^T-([MF])([0-9O]+)$/);
+	if (legacyMatch) {
+		const prefix = legacyMatch[1] === 'F' ? 'FT' : 'MT';
+		const normalizedDigits = String(legacyMatch[2]).replace(/O/g, '0');
+		return `${prefix}-${String(Number(normalizedDigits) || 0).padStart(3, '0')}`;
+	}
+
+	return collapsed;
+}
+
+function getTrainerIdAlternatives(input) {
+	const normalized = normalizeTrainerId(input);
+	if (!normalized) {
+		return [];
+	}
+
+	const match = normalized.match(/^([MF])T-(\d+)$/);
+	if (!match) {
+		return [normalized];
+	}
+
+	const gender = match[1];
+	const digits = match[2];
+	const legacyNoHyphen = `${gender}T${digits}`;
+	const legacyOldStyle = `T-${gender}${digits}`;
+	const legacyOldStyleWithSpace = `T-${gender} ${digits}`;
+
+	return Array.from(
+		new Set([normalized, legacyNoHyphen, legacyOldStyle, legacyOldStyleWithSpace])
+	);
+}
 
 const corsOrigin = process.env.ADMIN_DASHBOARD_ORIGIN || 'http://localhost:3000';
 const advertisementStaticDir = path.join(__dirname, 'data', 'ads');
@@ -96,6 +164,12 @@ const trainerSchema = new mongoose.Schema(
 			trim: true,
 			lowercase: true,
 		},
+		role: {
+			type: String,
+			enum: trainerRoleOptions,
+			required: true,
+			default: 'Strength Coach',
+		},
 		gender: {
 			type: String,
 			enum: ['Male', 'Female'],
@@ -119,6 +193,36 @@ const trainerSchema = new mongoose.Schema(
 		profileImage: {
 			type: String,
 			default: trainerImageFallback,
+		},
+		trainerPayment: {
+			bank: {
+				type: String,
+				default: '',
+				trim: true,
+			},
+			accountNumber: {
+				type: String,
+				default: '',
+				trim: true,
+			},
+			monthSalary: {
+				type: Number,
+				default: 0,
+				min: 0,
+			},
+			payDate: {
+				type: Date,
+				default: null,
+			},
+			status: {
+				type: String,
+				enum: ['Pending', 'Paid'],
+				default: 'Pending',
+			},
+			currency: {
+				type: String,
+				default: 'LKR',
+			},
 		},
 	},
 	{
@@ -158,6 +262,59 @@ profileSchema.index({ userName: 1 }, { unique: true });
 
 const Profile = mongoose.models.Profile || mongoose.model('Profile', profileSchema);
 
+const adminSignInSchema = new mongoose.Schema(
+	{
+		userName: {
+			type: String,
+			required: true,
+			trim: true,
+		},
+		userNameNormalized: {
+			type: String,
+			required: true,
+			trim: true,
+			lowercase: true,
+		},
+		email: {
+			type: String,
+			required: true,
+			trim: true,
+			lowercase: true,
+		},
+		passwordHash: {
+			type: String,
+			required: true,
+		},
+		role: {
+			type: String,
+			enum: ['main-admin', 'approved-admin'],
+			default: 'approved-admin',
+		},
+		isActive: {
+			type: Boolean,
+			default: true,
+		},
+		resetOtpHash: {
+			type: String,
+			default: '',
+		},
+		resetOtpExpiresAt: {
+			type: Date,
+			default: null,
+		},
+	},
+	{
+		timestamps: true,
+	}
+);
+
+adminSignInSchema.index({ userNameNormalized: 1 }, { unique: true });
+adminSignInSchema.index({ email: 1 }, { unique: true });
+
+const AdminSignIn =
+	mongoose.models.AdminSignIn ||
+	mongoose.model('AdminSignIn', adminSignInSchema, 'admin_sing_in');
+
 const mobileUserSchema = new mongoose.Schema(
 	{
 		firstName: {
@@ -175,6 +332,12 @@ const mobileUserSchema = new mongoose.Schema(
 			required: true,
 			trim: true,
 			lowercase: true,
+		},
+		memberCode: {
+			type: String,
+			default: '',
+			trim: true,
+			uppercase: true,
 		},
 		passwordHash: {
 			type: String,
@@ -197,6 +360,11 @@ const mobileUserSchema = new mongoose.Schema(
 		profileImage: {
 			type: String,
 			default: '',
+		},
+		fitnessGoals: {
+			type: [String],
+			enum: fitnessGoalOptions,
+			default: [],
 		},
 		membership: {
 			status: {
@@ -250,9 +418,56 @@ const mobileUserSchema = new mongoose.Schema(
 );
 
 mobileUserSchema.index({ email: 1 }, { unique: true });
+mobileUserSchema.index({ memberCode: 1 }, { unique: true, sparse: true });
 
 const MobileUser =
 	mongoose.models.MobileUser || mongoose.model('MobileUser', mobileUserSchema, 'users');
+
+const attendanceSchema = new mongoose.Schema(
+	{
+		memberId: {
+			type: mongoose.Schema.Types.ObjectId,
+			ref: 'MobileUser',
+			required: true,
+		},
+		dateKey: {
+			type: String,
+			required: true,
+			trim: true,
+		},
+		presentTime: {
+			type: Date,
+			required: true,
+		},
+		leaveTime: {
+			type: Date,
+			default: null,
+		},
+		status: {
+			type: String,
+			enum: ['Present', 'Leave'],
+			default: 'Present',
+		},
+		scanCount: {
+			type: Number,
+			default: 1,
+			min: 1,
+		},
+		lastScanAt: {
+			type: Date,
+			default: Date.now,
+		},
+	},
+	{
+		timestamps: true,
+	}
+);
+
+attendanceSchema.index({ memberId: 1, dateKey: 1 }, { unique: true });
+attendanceSchema.index({ dateKey: 1, createdAt: -1 });
+
+const Attendance =
+	mongoose.models.Attendance || mongoose.model('Attendance', attendanceSchema, 'attendance');
 
 const advertisementSchema = new mongoose.Schema(
 	{
@@ -355,17 +570,29 @@ function toTrainerResponseItem(item) {
 		return null;
 	}
 
+	const storedMonthSalary = Number((item.trainerPayment && item.trainerPayment.monthSalary) || 0);
+	const resolvedMonthSalary = storedMonthSalary > 0 ? storedMonthSalary : getTrainerMonthlySalaryByRole(item.role);
+
 	return {
 		_id: String(item._id),
-		trainerId: item.trainerId,
+		trainerId: normalizeTrainerId(item.trainerId),
 		firstName: item.firstName,
 		lastName: item.lastName,
 		email: item.email,
+		role: item.role || 'Strength Coach',
 		gender: item.gender,
 		age: item.age,
 		dob: item.dob,
 		status: item.status,
 		profileImage: item.profileImage || trainerImageFallback,
+		paymentBank: String((item.trainerPayment && item.trainerPayment.bank) || '').trim(),
+		paymentAccountNumber: String((item.trainerPayment && item.trainerPayment.accountNumber) || '').trim(),
+		monthSalary: resolvedMonthSalary,
+		payDate: item.trainerPayment && item.trainerPayment.payDate ? item.trainerPayment.payDate : null,
+		paymentStatus:
+			String((item.trainerPayment && item.trainerPayment.status) || '').trim() || 'Pending',
+		paymentCurrency:
+			String((item.trainerPayment && item.trainerPayment.currency) || '').trim() || 'LKR',
 		createdAt: item.createdAt,
 		updatedAt: item.updatedAt,
 	};
@@ -414,7 +641,164 @@ function parseDobFromRegisterInput(rawDob) {
 	return parsed;
 }
 
-function toMobileMemberResponseItem(item) {
+function formatDateKey(inputDate) {
+	const date = inputDate instanceof Date ? inputDate : new Date(inputDate);
+	const year = date.getFullYear();
+	const month = String(date.getMonth() + 1).padStart(2, '0');
+	const day = String(date.getDate()).padStart(2, '0');
+	return `${year}-${month}-${day}`;
+}
+
+function normalizeMemberCode(value) {
+	return String(value || '').trim().toUpperCase();
+}
+
+function isValidMemberCode(value) {
+	return /^[MF]-\d{3,}$/i.test(String(value || '').trim());
+}
+
+function getMemberCodePrefix(gender) {
+	return String(gender || '').trim().toLowerCase() === 'female' ? 'F' : 'M';
+}
+
+function getMemberCodeNumber(memberCode) {
+	const match = String(memberCode || '').trim().toUpperCase().match(/^[MF]-(\d+)$/);
+	if (!match) {
+		return 0;
+	}
+
+	const parsed = Number(match[1]);
+	return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function getNextMemberCode(prefix) {
+	const codePrefix = String(prefix || '').trim().toUpperCase() === 'F' ? 'F' : 'M';
+	const regex = new RegExp(`^${codePrefix}-\\d+$`, 'i');
+	const rows = await MobileUser.find({ memberCode: regex }).select({ memberCode: 1 }).lean();
+
+	let max = 0;
+	for (const row of rows) {
+		const current = getMemberCodeNumber(row && row.memberCode);
+		if (current > max) {
+			max = current;
+		}
+	}
+
+	return `${codePrefix}-${String(max + 1).padStart(3, '0')}`;
+}
+
+async function ensureMemberCode(member) {
+	if (!member || !member._id) {
+		return '';
+	}
+
+	const existingCode = normalizeMemberCode(member.memberCode);
+	if (isValidMemberCode(existingCode)) {
+		return existingCode;
+	}
+
+	const prefix = getMemberCodePrefix(member.gender);
+
+	for (let attempt = 0; attempt < 5; attempt += 1) {
+		const candidateCode = await getNextMemberCode(prefix);
+		try {
+			await MobileUser.updateOne(
+				{
+					_id: member._id,
+					$or: [{ memberCode: { $exists: false } }, { memberCode: '' }, { memberCode: null }],
+				},
+				{
+					$set: {
+						memberCode: candidateCode,
+					},
+				}
+			);
+		} catch (error) {
+			if (error && error.code === 11000) {
+				continue;
+			}
+			throw error;
+		}
+
+		const refreshed = await MobileUser.findById(member._id).select({ memberCode: 1 }).lean();
+		const refreshedCode = normalizeMemberCode(refreshed && refreshed.memberCode);
+		if (isValidMemberCode(refreshedCode)) {
+			return refreshedCode;
+		}
+	}
+
+	return '';
+}
+
+function parseMemberIdentifierFromQrValue(rawValue) {
+	const normalized = String(rawValue || '').trim();
+	if (!normalized) {
+		return '';
+	}
+
+	if (mongoose.isValidObjectId(normalized) || isValidMemberCode(normalized)) {
+		return normalized;
+	}
+
+	if (!(normalized.startsWith('{') && normalized.endsWith('}'))) {
+		return '';
+	}
+
+	try {
+		const parsed = JSON.parse(normalized);
+		const candidate = String(
+			(parsed && parsed.memberId) || (parsed && parsed.id) || (parsed && parsed._id) || ''
+		).trim();
+		if (!candidate) {
+			return '';
+		}
+		return candidate;
+	} catch (_error) {
+		return '';
+	}
+}
+
+function toAttendanceResponseItem(item, member) {
+	if (!item) {
+		return null;
+	}
+
+	const firstName = String((member && member.firstName) || '').trim();
+	const lastName = String((member && member.lastName) || '').trim();
+	const fullName = `${firstName} ${lastName}`.trim() || 'Member';
+	const memberObjectId = item.memberId && item.memberId._id ? item.memberId._id : item.memberId;
+	const memberCode = normalizeMemberCode(member && member.memberCode);
+
+	return {
+		_id: String(item._id),
+		memberId: memberCode || String(memberObjectId || ''),
+		memberName: fullName,
+		email: String((member && member.email) || '').trim().toLowerCase(),
+		dateKey: String(item.dateKey || '').trim(),
+		presentTime: item.presentTime || null,
+		leaveTime: item.leaveTime || null,
+		status: String(item.status || '').trim() || 'Present',
+		scanCount: Number(item.scanCount || 0),
+		lastScanAt: item.lastScanAt || null,
+		createdAt: item.createdAt || null,
+		updatedAt: item.updatedAt || null,
+	};
+}
+
+function summarizeAttendance(items) {
+	const safeItems = Array.isArray(items) ? items : [];
+	const leaveCount = safeItems.filter((item) => String(item.status || '') === 'Leave').length;
+	const total = safeItems.length;
+
+	return {
+		total,
+		presentCount: total,
+		leaveCount,
+		workingCount: total - leaveCount,
+	};
+}
+
+function toMobileMemberResponseItem(item, options = {}) {
 	if (!item) {
 		return null;
 	}
@@ -425,13 +809,21 @@ function toMobileMemberResponseItem(item) {
 		item.membership && String(item.membership.status || '').toLowerCase() === 'active'
 			? 'Active'
 			: 'Non Active';
+	const memberCode = normalizeMemberCode((options && options.memberCode) || item.memberCode);
 
 	return {
 		_id: String(item._id),
+		id: memberCode,
+		memberId: memberCode,
 		firstName: String(item.firstName || '').trim(),
 		lastName: String(item.lastName || '').trim(),
 		email: String(item.email || '').trim().toLowerCase(),
 		gender: String(item.gender || '').trim(),
+		fitnessGoals: Array.isArray(item.fitnessGoals)
+			? item.fitnessGoals
+				.map((goal) => String(goal || '').trim())
+				.filter(Boolean)
+			: [],
 		age: hasValidDob ? calculateAgeFromDate(dobDate) : '',
 		dob: hasValidDob ? dobDate.toISOString() : null,
 		status: membershipStatus,
@@ -478,7 +870,13 @@ function getMailTransporter() {
 	return mailTransporter;
 }
 
-async function sendAccessReviewEmail({ to, userName, action, rejectReason, reviewedBy }) {
+async function sendAccessReviewEmail({
+	to,
+	userName,
+	action,
+	rejectReason,
+	reviewedBy,
+}) {
 	if (!accessReviewMailEnabled) {
 		return { sent: false, reason: 'mail-disabled' };
 	}
@@ -497,10 +895,10 @@ async function sendAccessReviewEmail({ to, userName, action, rejectReason, revie
 		`Hi ${userName || 'User'},`,
 		'',
 		isApproved
-			? 'Your access request has been approved. You can now sign in to the admin dashboard.'
+			? 'Your access request has been approved.'
 			: 'Your access request has been rejected by the admin team.',
 		'',
-		`Reviewed by: ${reviewedBy || adminUserName}`,
+		`Reviewed by: ${reviewedBy || defaultAdminUserName}`,
 		`Reviewed at: ${new Date().toLocaleString('en-GB')}`,
 	];
 
@@ -536,6 +934,109 @@ async function sendAccessReviewEmail({ to, userName, action, rejectReason, revie
 
 		return { sent: false, reason: 'send-failed' };
 	}
+}
+
+async function sendAdminResetOtpEmail({ to, userName, otp, expiresInMinutes }) {
+	if (!isMailConfigured()) {
+		return { sent: false, reason: 'smtp-not-configured' };
+	}
+
+	const subject = 'Smart Fitness admin password reset OTP';
+	const textLines = [
+		`Hi ${userName || 'Admin'},`,
+		'',
+		'Use the following OTP to reset your admin dashboard password.',
+		`OTP: ${otp}`,
+		`This OTP will expire in ${expiresInMinutes} minutes.`,
+		'',
+		'If you did not request this, please ignore this email.',
+		'',
+		'Smart Fitness Team',
+	];
+
+	try {
+		await getMailTransporter().sendMail({
+			from: smtpFrom,
+			to,
+			subject,
+			text: textLines.join('\n'),
+		});
+
+		return { sent: true };
+	} catch (_error) {
+		return { sent: false, reason: 'send-failed' };
+	}
+}
+
+async function sendAdminPasswordChangedSuccessEmail({ to, userName }) {
+	if (!isMailConfigured()) {
+		return { sent: false, reason: 'smtp-not-configured' };
+	}
+
+	const subject = 'Smart Fitness admin password changed successfully';
+	const textLines = [
+		`Hi ${userName || 'Admin'},`,
+		'',
+		'Your admin dashboard password was changed successfully.',
+		'You can now sign in with your new password.',
+		'',
+		'If this was not you, please contact support immediately.',
+		'',
+		'Smart Fitness Team',
+	];
+
+	try {
+		await getMailTransporter().sendMail({
+			from: smtpFrom,
+			to,
+			subject,
+			text: textLines.join('\n'),
+		});
+
+		return { sent: true };
+	} catch (_error) {
+		return { sent: false, reason: 'send-failed' };
+	}
+}
+
+async function ensureDefaultMainAdminAccount() {
+	const normalizedUserName = String(defaultAdminUserName).trim().toLowerCase();
+	const normalizedEmail = String(defaultAdminEmail).trim().toLowerCase();
+
+	if (!normalizedUserName || !normalizedEmail) {
+		return;
+	}
+
+	const existing = await AdminSignIn.findOne({
+		userNameNormalized: normalizedUserName,
+	}).lean();
+
+	if (existing) {
+		await AdminSignIn.updateOne(
+			{ _id: existing._id },
+			{
+				$set: {
+					userName: String(defaultAdminUserName).trim(),
+					userNameNormalized: normalizedUserName,
+					email: normalizedEmail,
+					role: 'main-admin',
+					isActive: true,
+				},
+			}
+		);
+		return;
+	}
+
+	const passwordHash = await bcrypt.hash(String(defaultAdminPassword), 10);
+
+	await AdminSignIn.create({
+		userName: String(defaultAdminUserName).trim(),
+		userNameNormalized: normalizedUserName,
+		email: normalizedEmail,
+		passwordHash,
+		role: 'main-admin',
+		isActive: true,
+	});
 }
 
 async function sendMobileResetOtpEmail({ to, firstName, otp, expiresInMinutes }) {
@@ -609,6 +1110,65 @@ async function sendRegisterPaymentSuccessEmail({ to, firstName, paidAmount, curr
 
 		return { sent: true };
 	} catch (_error) {
+		return { sent: false, reason: 'send-failed' };
+	}
+}
+
+async function sendTrainerPaymentSuccessEmail({
+	to,
+	firstName,
+	lastName,
+	amount,
+	currency,
+	paidAt,
+	bank,
+	accountNumber,
+}) {
+	if (!trainerPaymentMailEnabled) {
+		return { sent: false, reason: 'mail-disabled' };
+	}
+
+	if (!isMailConfigured()) {
+		console.warn('Trainer payment success email skipped: SMTP settings are incomplete');
+		return { sent: false, reason: 'smtp-not-configured' };
+	}
+
+	const safeAmount = Number(amount);
+	const amountText = Number.isFinite(safeAmount)
+		? `${String(currency || 'LKR').toUpperCase()} ${safeAmount.toFixed(2)}`
+		: 'Processed';
+	const fullName = `${String(firstName || '').trim()} ${String(lastName || '').trim()}`.trim() || 'Trainer';
+	const paidDateLabel = paidAt && !Number.isNaN(new Date(paidAt).getTime())
+		? new Date(paidAt).toLocaleString('en-GB')
+		: new Date().toLocaleString('en-GB');
+
+	const subject = 'Smart Fitness trainer salary payment successful';
+	const text = [
+		`Hi ${fullName},`,
+		'',
+		'Your monthly salary payment was completed successfully.',
+		'',
+		`Amount: ${amountText}`,
+		`Bank: ${String(bank || '').trim() || '-'}`,
+		`Account Number: ${String(accountNumber || '').trim() || '-'}`,
+		`Pay Date: ${paidDateLabel}`,
+		'',
+		'Thank you for your contribution.',
+		'',
+		'Smart Fitness Team',
+	].join('\n');
+
+	try {
+		await getMailTransporter().sendMail({
+			from: smtpFrom,
+			to,
+			subject,
+			text,
+		});
+
+		return { sent: true, reason: 'sent' };
+	} catch (error) {
+		console.error('Failed to send trainer payment success email:', error.message);
 		return { sent: false, reason: 'send-failed' };
 	}
 }
@@ -761,6 +1321,11 @@ function createMongoStore() {
 				.sort({ createdAt: -1 })
 				.lean();
 		},
+		async listApproved() {
+			return AccessRequest.find({ status: 'approved' })
+				.sort({ reviewedAt: -1, createdAt: -1 })
+				.lean();
+		},
 		async findApprovedByUserName(userName) {
 			return AccessRequest.findOne({ userName, status: 'approved' }).lean();
 		},
@@ -796,6 +1361,15 @@ function createMongoStore() {
 			).lean();
 
 			return updated;
+		},
+		async deleteApprovedById(id) {
+			const existing = await AccessRequest.findOne({ _id: id, status: 'approved' }).lean();
+			if (!existing) {
+				return null;
+			}
+
+			await AccessRequest.deleteOne({ _id: id, status: 'approved' });
+			return existing;
 		},
 	};
 }
@@ -859,6 +1433,15 @@ async function createSqliteStore() {
 				`SELECT * FROM access_requests
 				 WHERE status = 'pending'
 				 ORDER BY datetime(created_at) DESC`
+			);
+
+			return rows.map(mapSqliteRow);
+		},
+		async listApproved() {
+			const rows = await db.all(
+				`SELECT * FROM access_requests
+				 WHERE status = 'approved'
+				 ORDER BY datetime(COALESCE(reviewed_at, created_at)) DESC`
 			);
 
 			return rows.map(mapSqliteRow);
@@ -927,6 +1510,24 @@ async function createSqliteStore() {
 			const updated = await db.get('SELECT * FROM access_requests WHERE id = ?', [numericId]);
 			return mapSqliteRow(updated);
 		},
+		async deleteApprovedById(id) {
+			const numericId = Number(id);
+			if (!Number.isInteger(numericId)) {
+				return null;
+			}
+
+			const existing = await db.get(
+				`SELECT * FROM access_requests WHERE id = ? AND status = 'approved'`,
+				[numericId]
+			);
+
+			if (!existing) {
+				return null;
+			}
+
+			await db.run(`DELETE FROM access_requests WHERE id = ? AND status = 'approved'`, [numericId]);
+			return mapSqliteRow(existing);
+		},
 	};
 }
 
@@ -968,6 +1569,7 @@ app.post('/api/mobile/register-and-pay', async (req, res) => {
 			password,
 			confirmPassword,
 			gender,
+			fitnessGoals,
 			phoneNumber,
 			dateOfBirth,
 			profileImage,
@@ -995,6 +1597,29 @@ app.post('/api/mobile/register-and-pay', async (req, res) => {
 		}
 
 		const paymentPayload = payment || {};
+		const normalizedFitnessGoals = Array.isArray(fitnessGoals)
+			? Array.from(
+				new Set(
+					fitnessGoals
+						.map((goal) => String(goal || '').trim())
+						.filter(Boolean)
+				)
+			)
+			: [];
+
+		if (normalizedFitnessGoals.length < 1 || normalizedFitnessGoals.length > 3) {
+			return res.status(400).json({
+				message: 'Please select at least 1 and at most 3 fitness goals',
+			});
+		}
+
+		const hasInvalidFitnessGoal = normalizedFitnessGoals.some(
+			(goal) => !fitnessGoalOptions.includes(goal)
+		);
+		if (hasInvalidFitnessGoal) {
+			return res.status(400).json({ message: 'Invalid fitness goal selection' });
+		}
+
 		const includeMonthFee = Boolean(paymentPayload.includeMonthFee);
 		const admissionFee = 1000;
 		const monthFee = includeMonthFee ? 2000 : 0;
@@ -1033,13 +1658,16 @@ app.post('/api/mobile/register-and-pay', async (req, res) => {
 
 		const parsedDob = parseDobFromRegisterInput(dateOfBirth);
 		const passwordHash = await bcrypt.hash(String(password), 10);
+		const memberCode = await getNextMemberCode(getMemberCodePrefix(gender));
 
 		const created = await MobileUser.create({
 			firstName: String(firstName).trim(),
 			lastName: String(lastName).trim(),
 			email: normalizedEmail,
+			memberCode,
 			passwordHash,
 			gender: String(gender || '').trim(),
+			fitnessGoals: normalizedFitnessGoals,
 			phoneNumber: String(phoneNumber || '').trim(),
 			dateOfBirth: parsedDob,
 			profileImage: String(profileImage || '').trim(),
@@ -1109,6 +1737,8 @@ app.post('/api/mobile/login', async (req, res) => {
 			return res.status(401).json({ message: 'Invalid email or password' });
 		}
 
+		const memberCode = await ensureMemberCode(member);
+
 		const isPasswordValid = await bcrypt.compare(password, String(member.passwordHash || ''));
 		if (!isPasswordValid) {
 			return res.status(401).json({ message: 'Invalid email or password' });
@@ -1129,7 +1759,7 @@ app.post('/api/mobile/login', async (req, res) => {
 		return res.status(200).json({
 			message: 'Sign in successful',
 			token,
-			item: toMobileMemberResponseItem(member),
+			item: toMobileMemberResponseItem(member, { memberCode }),
 		});
 	} catch (_error) {
 		return res.status(500).json({ message: 'Sign in failed. Please try again.' });
@@ -1171,9 +1801,11 @@ app.put('/api/mobile/profile', requireMemberAuth, async (req, res) => {
 			return res.status(404).json({ message: 'Member not found' });
 		}
 
+		const memberCode = await ensureMemberCode(updated);
+
 		return res.status(200).json({
 			message: 'Profile updated successfully',
-			item: toMobileMemberResponseItem(updated),
+			item: toMobileMemberResponseItem(updated, { memberCode }),
 		});
 	} catch (_error) {
 		return res.status(500).json({ message: 'Failed to update profile' });
@@ -1448,11 +2080,13 @@ app.post('/api/members', requireAdminAuth, async (req, res) => {
 		}
 
 		const passwordHash = await bcrypt.hash(password, 10);
+		const memberCode = await getNextMemberCode(getMemberCodePrefix(gender));
 
 		const createdMember = await MobileUser.create({
 			firstName,
 			lastName,
 			email,
+			memberCode,
 			passwordHash,
 			gender,
 			dateOfBirth: parsedDob,
@@ -1489,8 +2123,14 @@ app.post('/api/members', requireAdminAuth, async (req, res) => {
 app.get('/api/members', requireAdminAuth, async (_req, res) => {
 	try {
 		const members = await MobileUser.find({}).sort({ createdAt: -1 }).lean();
+		const items = await Promise.all(
+			members.map(async (member) => {
+				const memberCode = await ensureMemberCode(member);
+				return toMobileMemberResponseItem(member, { memberCode });
+			})
+		);
 		return res.status(200).json({
-			items: members.map(toMobileMemberResponseItem).filter(Boolean),
+			items: items.filter(Boolean),
 		});
 	} catch (_error) {
 		return res.status(500).json({ message: 'Failed to load members' });
@@ -1509,7 +2149,9 @@ app.get('/api/members/:id', requireAdminAuth, async (req, res) => {
 			return res.status(404).json({ message: 'Member not found' });
 		}
 
-		return res.status(200).json({ item: toMobileMemberResponseItem(member) });
+		const memberCode = await ensureMemberCode(member);
+
+		return res.status(200).json({ item: toMobileMemberResponseItem(member, { memberCode }) });
 	} catch (_error) {
 		return res.status(500).json({ message: 'Failed to load member details' });
 	}
@@ -1565,9 +2207,11 @@ app.put('/api/members/:id', requireAdminAuth, async (req, res) => {
 			return res.status(404).json({ message: 'Member not found' });
 		}
 
+		const memberCode = await ensureMemberCode(updatedMember);
+
 		return res.status(200).json({
 			message: 'Member updated successfully',
-			item: toMobileMemberResponseItem(updatedMember),
+			item: toMobileMemberResponseItem(updatedMember, { memberCode }),
 		});
 	} catch (error) {
 		if (error && error.code === 11000) {
@@ -1593,6 +2237,141 @@ app.delete('/api/members/:id', requireAdminAuth, async (req, res) => {
 		return res.status(200).json({ message: 'Member deleted successfully' });
 	} catch (_error) {
 		return res.status(500).json({ message: 'Failed to delete member' });
+	}
+});
+
+app.post('/api/admin/attendance/scan', requireAdminAuth, async (req, res) => {
+	try {
+		const rawQrValue = String((req.body && (req.body.qrValue || req.body.qrData || req.body.value)) || '').trim();
+		if (!rawQrValue) {
+			return res.status(400).json({ message: 'QR value is required' });
+		}
+
+		const memberIdentifier = parseMemberIdentifierFromQrValue(rawQrValue);
+		if (!memberIdentifier) {
+			return res.status(400).json({ message: 'Invalid QR code data' });
+		}
+
+		let member = null;
+		if (mongoose.isValidObjectId(memberIdentifier)) {
+			member = await MobileUser.findById(memberIdentifier).lean();
+		} else {
+			const normalizedMemberCode = normalizeMemberCode(memberIdentifier);
+			if (isValidMemberCode(normalizedMemberCode)) {
+				member = await MobileUser.findOne({ memberCode: normalizedMemberCode }).lean();
+			}
+		}
+
+		if (!member) {
+			return res.status(404).json({ message: 'Member not found for this QR code' });
+		}
+
+		const ensuredMemberCode = await ensureMemberCode(member);
+		const memberObjectId = String(member._id);
+
+		const now = new Date();
+		const dateKey = formatDateKey(now);
+		const existing = await Attendance.findOne({ memberId: memberObjectId, dateKey }).lean();
+
+		let savedItem = null;
+		let event = 'present';
+
+		if (!existing) {
+			savedItem = await Attendance.create({
+				memberId: memberObjectId,
+				dateKey,
+				presentTime: now,
+				leaveTime: null,
+				status: 'Present',
+				scanCount: 1,
+				lastScanAt: now,
+			});
+		} else if (!existing.leaveTime && String(existing.status || '').trim() === 'Present') {
+			event = 'leave';
+			savedItem = await Attendance.findByIdAndUpdate(
+				existing._id,
+				{
+					$set: {
+						leaveTime: now,
+						status: 'Leave',
+						lastScanAt: now,
+					},
+					$inc: {
+						scanCount: 1,
+					},
+				},
+				{ new: true }
+			).lean();
+		} else {
+			event = 'already-closed';
+			savedItem = await Attendance.findByIdAndUpdate(
+				existing._id,
+				{
+					$set: {
+						lastScanAt: now,
+					},
+					$inc: {
+						scanCount: 1,
+					},
+				},
+				{ new: true }
+			).lean();
+		}
+
+		const attendanceItem = toAttendanceResponseItem(savedItem, {
+			...member,
+			memberCode: ensuredMemberCode,
+		});
+		const paymentInfo = member && member.payment ? member.payment : null;
+		const paymentStatus = paymentInfo && Number(paymentInfo.totalAmount || 0) > 0 ? 'Paid' : 'Pending';
+
+		return res.status(200).json({
+			message:
+				event === 'present'
+					? 'Present time marked successfully'
+					: event === 'leave'
+						? 'Leave time marked successfully'
+						: 'Attendance already completed for today',
+			event,
+			item: attendanceItem,
+			payment: {
+				status: paymentStatus,
+				lastPaidAt: paymentInfo && paymentInfo.paidAt ? paymentInfo.paidAt : null,
+				totalAmount: paymentInfo ? Number(paymentInfo.totalAmount || 0) : 0,
+				currency: paymentInfo ? String(paymentInfo.currency || 'LKR') : 'LKR',
+			},
+		});
+	} catch (_error) {
+		return res.status(500).json({ message: 'Failed to process attendance scan' });
+	}
+});
+
+app.get('/api/admin/attendance', requireAdminAuth, async (req, res) => {
+	try {
+		const requestedDate = String((req.query && req.query.date) || '').trim();
+		const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate)
+			? requestedDate
+			: formatDateKey(new Date());
+
+		const rows = await Attendance.find({ dateKey })
+			.sort({ presentTime: -1, createdAt: -1 })
+			.populate({
+				path: 'memberId',
+				select: 'firstName lastName email memberCode gender',
+			})
+			.lean();
+
+		const items = rows
+			.map((row) => toAttendanceResponseItem(row, row.memberId))
+			.filter(Boolean);
+
+		return res.status(200).json({
+			dateKey,
+			summary: summarizeAttendance(items),
+			items,
+		});
+	} catch (_error) {
+		return res.status(500).json({ message: 'Failed to load attendance' });
 	}
 });
 
@@ -1629,7 +2408,12 @@ app.post('/api/access-requests', async (req, res) => {
 			normalizedEmail
 		);
 
-		if (existingRequest) {
+		const existingAdmin = await AdminSignIn.findOne({
+			$or: [{ userNameNormalized: normalizedUserName }, { email: normalizedEmail }],
+			isActive: true,
+		}).lean();
+
+		if (existingRequest || existingAdmin) {
 			return res.status(409).json({
 				message: 'This username or email already has an active request/account',
 			});
@@ -1672,6 +2456,80 @@ app.get('/api/access-requests/pending', requireAdminAuth, async (_req, res) => {
 	}
 });
 
+app.get('/api/access-requests/approved', requireAdminAuth, async (req, res) => {
+	try {
+		if (!accessRequestStore) {
+			return res.status(503).json({ message: 'Access request store is not ready' });
+		}
+
+		const normalizedCurrentAdmin = String((req.admin && req.admin.userName) || '')
+			.trim()
+			.toLowerCase();
+		const normalizedMainAdmin = String(defaultAdminUserName || '').trim().toLowerCase();
+
+		if (!normalizedCurrentAdmin || normalizedCurrentAdmin !== normalizedMainAdmin) {
+			return res.status(403).json({ message: 'Only the main admin can view approved access list' });
+		}
+
+		const approvedRequests = await accessRequestStore.listApproved();
+		const items = approvedRequests.map(toResponseItem);
+
+		return res.status(200).json({ items });
+	} catch (_error) {
+		return res.status(500).json({ message: 'Failed to load approved requests' });
+	}
+});
+
+app.delete('/api/access-requests/approved/:id', requireAdminAuth, async (req, res) => {
+	try {
+		if (!accessRequestStore) {
+			return res.status(503).json({ message: 'Access request store is not ready' });
+		}
+
+		const normalizedCurrentAdmin = String((req.admin && req.admin.userName) || '')
+			.trim()
+			.toLowerCase();
+		const normalizedMainAdmin = String(defaultAdminUserName || '').trim().toLowerCase();
+
+		if (!normalizedCurrentAdmin || normalizedCurrentAdmin !== normalizedMainAdmin) {
+			return res.status(403).json({ message: 'Only the main admin can delete approved access' });
+		}
+
+		const { id } = req.params;
+		const removed = await accessRequestStore.deleteApprovedById(id);
+
+		if (!removed) {
+			return res.status(404).json({ message: 'Approved access request not found' });
+		}
+
+		const normalizedRemovedUserName = String(removed.userName || '').trim().toLowerCase();
+		const normalizedRemovedEmail = String(removed.email || '').trim().toLowerCase();
+
+		await AdminSignIn.updateOne(
+			{
+				userNameNormalized: normalizedRemovedUserName,
+				email: normalizedRemovedEmail,
+				role: 'approved-admin',
+				isActive: true,
+			},
+			{
+				$set: {
+					isActive: false,
+					resetOtpHash: '',
+					resetOtpExpiresAt: null,
+				},
+			}
+		);
+
+		return res.status(200).json({
+			message: 'Approved access removed successfully',
+			item: toResponseItem(removed),
+		});
+	} catch (_error) {
+		return res.status(500).json({ message: 'Failed to delete approved access request' });
+	}
+});
+
 app.patch('/api/access-requests/:id/review', requireAdminAuth, async (req, res) => {
 	try {
 		if (!accessRequestStore) {
@@ -1697,7 +2555,7 @@ app.patch('/api/access-requests/:id/review', requireAdminAuth, async (req, res) 
 		const updatedRequest = await accessRequestStore.review({
 			id,
 			status: action === 'approve' ? 'approved' : 'rejected',
-			reviewedBy: req.admin.userName || adminUserName,
+			reviewedBy: req.admin.userName || defaultAdminUserName,
 			rejectReason: action === 'reject' ? String(reason || '').trim() : '',
 		});
 
@@ -1705,12 +2563,41 @@ app.patch('/api/access-requests/:id/review', requireAdminAuth, async (req, res) 
 			return res.status(400).json({ message: 'Only pending requests can be reviewed' });
 		}
 
+		if (action === 'approve') {
+			const normalizedUserName = String(updatedRequest.userName || '').trim().toLowerCase();
+			const normalizedEmail = String(updatedRequest.email || '').trim().toLowerCase();
+			const approvedPasswordHash = String(
+				updatedRequest.passwordHash || requestItem.passwordHash || ''
+			).trim();
+
+			if (!approvedPasswordHash) {
+				return res.status(500).json({ message: 'Approved account password is missing' });
+			}
+
+			await AdminSignIn.findOneAndUpdate(
+				{ userNameNormalized: normalizedUserName },
+				{
+					$set: {
+						userName: String(updatedRequest.userName || '').trim(),
+						userNameNormalized: normalizedUserName,
+						email: normalizedEmail,
+						passwordHash: approvedPasswordHash,
+						role: 'approved-admin',
+						isActive: true,
+						resetOtpHash: '',
+						resetOtpExpiresAt: null,
+					},
+				},
+				{ new: true, upsert: true, setDefaultsOnInsert: true }
+			);
+		}
+
 		const emailResult = await sendAccessReviewEmail({
 			to: updatedRequest.email,
 			userName: updatedRequest.userName,
 			action,
 			rejectReason: updatedRequest.rejectReason,
-			reviewedBy: req.admin.userName || adminUserName,
+			reviewedBy: req.admin.userName || defaultAdminUserName,
 		});
 
 		return res.status(200).json({
@@ -1742,27 +2629,39 @@ app.post('/api/trainers', requireAdminAuth, async (req, res) => {
 			firstName,
 			lastName,
 			email,
+			role,
 			gender,
 			dob,
 			status,
 			profileImage,
 		} = req.body || {};
 
-		if (!trainerId || !firstName || !lastName || !email || !gender || !dob) {
+		if (!trainerId || !firstName || !lastName || !email || !role || !gender || !dob) {
 			return res.status(400).json({
-				message: 'Trainer ID, first name, last name, email, gender, and date of birth are required',
+				message: 'Trainer ID, first name, last name, email, role, gender, and date of birth are required',
 			});
 		}
 
-		const normalizedTrainerId = String(trainerId).trim().toUpperCase();
+		const normalizedTrainerId = normalizeTrainerId(trainerId);
+				if (!/^(?:FT|MT)-\d{3,}$/.test(normalizedTrainerId)) {
+					return res.status(400).json({ message: 'Trainer ID must be in FT-005 or MT-005 format' });
+				}
+
 		const normalizedFirstName = String(firstName).trim();
 		const normalizedLastName = String(lastName).trim();
 		const normalizedEmail = String(email).trim().toLowerCase();
+		const normalizedRole = String(role).trim();
 		const normalizedGender = String(gender).trim();
 		const dobDate = new Date(dob);
 
 		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
 			return res.status(400).json({ message: 'Enter a valid email address' });
+		}
+
+		if (!trainerRoleOptions.includes(normalizedRole)) {
+			return res.status(400).json({
+				message: 'Role must be Strength Coach, Yoga Instructor, or Cardio Trainer',
+			});
 		}
 
 		if (!['Male', 'Female'].includes(normalizedGender)) {
@@ -1795,6 +2694,7 @@ app.post('/api/trainers', requireAdminAuth, async (req, res) => {
 			firstName: normalizedFirstName,
 			lastName: normalizedLastName,
 			email: normalizedEmail,
+			role: normalizedRole,
 			gender: normalizedGender,
 			age: calculatedAge,
 			dob: dobDate,
@@ -1817,31 +2717,40 @@ app.post('/api/trainers', requireAdminAuth, async (req, res) => {
 
 app.put('/api/trainers/:trainerId', requireAdminAuth, async (req, res) => {
 	try {
-		const routeTrainerId = String(req.params.trainerId || '').trim().toUpperCase();
+		const routeTrainerId = normalizeTrainerId(req.params.trainerId);
+		const routeTrainerIdAlternatives = getTrainerIdAlternatives(req.params.trainerId);
 		const {
 			firstName,
 			lastName,
 			email,
+			role,
 			gender,
 			dob,
 			status,
 			profileImage,
 		} = req.body || {};
 
-		if (!routeTrainerId || !firstName || !lastName || !email || !gender || !dob) {
+		if (!routeTrainerId || !firstName || !lastName || !email || !role || !gender || !dob) {
 			return res.status(400).json({
-				message: 'Trainer ID, first name, last name, email, gender, and date of birth are required',
+				message: 'Trainer ID, first name, last name, email, role, gender, and date of birth are required',
 			});
 		}
 
 		const normalizedFirstName = String(firstName).trim();
 		const normalizedLastName = String(lastName).trim();
 		const normalizedEmail = String(email).trim().toLowerCase();
+		const normalizedRole = String(role).trim();
 		const normalizedGender = String(gender).trim();
 		const dobDate = new Date(dob);
 
 		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
 			return res.status(400).json({ message: 'Enter a valid email address' });
+		}
+
+		if (!trainerRoleOptions.includes(normalizedRole)) {
+			return res.status(400).json({
+				message: 'Role must be Strength Coach, Yoga Instructor, or Cardio Trainer',
+			});
 		}
 
 		if (!['Male', 'Female'].includes(normalizedGender)) {
@@ -1859,14 +2768,14 @@ app.put('/api/trainers/:trainerId', requireAdminAuth, async (req, res) => {
 			});
 		}
 
-		const existingTrainer = await Trainer.findOne({ trainerId: routeTrainerId }).lean();
+		const existingTrainer = await Trainer.findOne({ trainerId: { $in: routeTrainerIdAlternatives } }).lean();
 		if (!existingTrainer) {
 			return res.status(404).json({ message: 'Trainer not found' });
 		}
 
 		const duplicateEmailTrainer = await Trainer.findOne({
 			email: normalizedEmail,
-			trainerId: { $ne: routeTrainerId },
+			trainerId: { $ne: existingTrainer.trainerId },
 		}).lean();
 
 		if (duplicateEmailTrainer) {
@@ -1874,12 +2783,14 @@ app.put('/api/trainers/:trainerId', requireAdminAuth, async (req, res) => {
 		}
 
 		const updated = await Trainer.findOneAndUpdate(
-			{ trainerId: routeTrainerId },
+			{ trainerId: existingTrainer.trainerId },
 			{
 				$set: {
+					trainerId: routeTrainerId,
 					firstName: normalizedFirstName,
 					lastName: normalizedLastName,
 					email: normalizedEmail,
+					role: normalizedRole,
 					gender: normalizedGender,
 					age: calculatedAge,
 					dob: dobDate,
@@ -1903,14 +2814,85 @@ app.put('/api/trainers/:trainerId', requireAdminAuth, async (req, res) => {
 	}
 });
 
-app.delete('/api/trainers/:trainerId', requireAdminAuth, async (req, res) => {
+app.post('/api/trainers/:trainerId/pay', requireAdminAuth, async (req, res) => {
 	try {
-		const routeTrainerId = String(req.params.trainerId || '').trim().toUpperCase();
+		const routeTrainerId = normalizeTrainerId(req.params.trainerId);
+		const routeTrainerIdAlternatives = getTrainerIdAlternatives(req.params.trainerId);
+		const bank = String((req.body && req.body.bank) || '').trim();
+		const accountNumber = String((req.body && req.body.accountNumber) || '').trim();
+
 		if (!routeTrainerId) {
 			return res.status(400).json({ message: 'Trainer ID is required' });
 		}
 
-		const deleted = await Trainer.findOneAndDelete({ trainerId: routeTrainerId }).lean();
+		if (!bank) {
+			return res.status(400).json({ message: 'Bank is required' });
+		}
+
+		if (!/^\d{6,20}$/.test(accountNumber)) {
+			return res.status(400).json({ message: 'Account number must be 6 to 20 digits' });
+		}
+
+		const existingTrainer = await Trainer.findOne({ trainerId: { $in: routeTrainerIdAlternatives } }).lean();
+		if (!existingTrainer) {
+			return res.status(404).json({ message: 'Trainer not found' });
+		}
+
+		const monthSalary = getTrainerMonthlySalaryByRole(existingTrainer.role);
+		if (!Number.isFinite(monthSalary) || monthSalary <= 0) {
+			return res.status(400).json({ message: 'Trainer role does not have a configured monthly salary' });
+		}
+
+		const paidAt = new Date();
+		const updated = await Trainer.findOneAndUpdate(
+			{ trainerId: existingTrainer.trainerId },
+			{
+				$set: {
+					trainerId: routeTrainerId,
+					trainerPayment: {
+						bank,
+						accountNumber,
+						monthSalary,
+						payDate: paidAt,
+						status: 'Paid',
+						currency: 'LKR',
+					},
+				},
+			},
+			{ new: true }
+		).lean();
+
+		const mailResult = await sendTrainerPaymentSuccessEmail({
+			to: String(updated && updated.email ? updated.email : '').trim(),
+			firstName: updated && updated.firstName,
+			lastName: updated && updated.lastName,
+			amount: monthSalary,
+			currency: 'LKR',
+			paidAt,
+			bank,
+			accountNumber,
+		});
+
+		return res.status(200).json({
+			message: 'Trainer salary paid successfully',
+			emailSent: Boolean(mailResult.sent),
+			emailStatus: mailResult.reason || 'sent',
+			item: toTrainerResponseItem(updated),
+		});
+	} catch (_error) {
+		return res.status(500).json({ message: 'Failed to process trainer payment' });
+	}
+});
+
+app.delete('/api/trainers/:trainerId', requireAdminAuth, async (req, res) => {
+	try {
+		const routeTrainerId = normalizeTrainerId(req.params.trainerId);
+		const routeTrainerIdAlternatives = getTrainerIdAlternatives(req.params.trainerId);
+		if (!routeTrainerId) {
+			return res.status(400).json({ message: 'Trainer ID is required' });
+		}
+
+		const deleted = await Trainer.findOneAndDelete({ trainerId: { $in: routeTrainerIdAlternatives } }).lean();
 		if (!deleted) {
 			return res.status(404).json({ message: 'Trainer not found' });
 		}
@@ -2009,25 +2991,21 @@ app.post('/api/auth/login', async (req, res) => {
 		}
 
 		const normalizedUserName = String(userName).trim().toLowerCase();
-		const normalizedAdminUserName = String(adminUserName).trim().toLowerCase();
+		const account = await AdminSignIn.findOne({
+			userNameNormalized: normalizedUserName,
+			isActive: true,
+		}).lean();
 
-		let authenticatedUserName = '';
-		let isPasswordValid = false;
-
-		if (normalizedUserName === normalizedAdminUserName) {
-			isPasswordValid = await bcrypt.compare(password, adminPasswordHash);
-			authenticatedUserName = adminUserName;
-		} else if (accessRequestStore && typeof accessRequestStore.findApprovedByUserName === 'function') {
-			const approvedUser = await accessRequestStore.findApprovedByUserName(normalizedUserName);
-			if (approvedUser) {
-				isPasswordValid = await bcrypt.compare(password, approvedUser.passwordHash || '');
-				authenticatedUserName = approvedUser.userName;
-			}
+		if (!account) {
+			return res.status(401).json({ message: 'Invalid username or password' });
 		}
 
+		const isPasswordValid = await bcrypt.compare(password, String(account.passwordHash || ''));
 		if (!isPasswordValid) {
 			return res.status(401).json({ message: 'Invalid username or password' });
 		}
+
+		const authenticatedUserName = String(account.userName || '').trim() || normalizedUserName;
 
 		const token = jwt.sign(
 			{
@@ -2053,53 +3031,72 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.post('/api/auth/forgot-password', async (req, res) => {
 	try {
-		const { userName } = req.body || {};
+		const { userName, email } = req.body || {};
 
-		if (!userName || !String(userName).trim()) {
-			return res.status(400).json({ message: 'Username is required' });
+		if (!userName || !String(userName).trim() || !email || !String(email).trim()) {
+			return res.status(400).json({ message: 'Username and email are required' });
 		}
 
 		const normalizedUserName = String(userName).trim().toLowerCase();
-		const normalizedAdminUserName = String(adminUserName).trim().toLowerCase();
-		const isAdminUser = normalizedUserName === normalizedAdminUserName;
-		const genericMessage =
-			'If the account exists, a reset token has been generated for password reset.';
+		const normalizedEmail = String(email).trim().toLowerCase();
 
-		let targetAccountType = '';
-		let targetUserName = '';
+		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+			return res.status(400).json({ message: 'Enter a valid email address' });
+		}
 
-		if (isAdminUser) {
-			targetAccountType = 'main-admin';
-			targetUserName = adminUserName;
-		} else if (accessRequestStore && typeof accessRequestStore.findApprovedByUserName === 'function') {
-			const approvedUser = await accessRequestStore.findApprovedByUserName(normalizedUserName);
-			if (approvedUser) {
-				targetAccountType = 'approved-admin';
-				targetUserName = approvedUser.userName;
+		const accountByUserName = await AdminSignIn.findOne({
+			userNameNormalized: normalizedUserName,
+			isActive: true,
+		});
+
+		if (!accountByUserName) {
+			return res.status(404).json({ message: 'No active admin account found for this username' });
+		}
+
+		if (String(accountByUserName.email || '').trim().toLowerCase() !== normalizedEmail) {
+			return res
+				.status(400)
+				.json({ message: 'This email does not match this username.' });
+		}
+
+		const account = accountByUserName;
+
+		const otpCode = String(crypto.randomInt(100000, 1000000));
+		const otpHash = await bcrypt.hash(otpCode, 10);
+		const expiresAt = new Date(Date.now() + resetTokenExpiryMinutes * 60 * 1000);
+
+		await AdminSignIn.updateOne(
+			{ _id: account._id },
+			{
+				$set: {
+					resetOtpHash: otpHash,
+					resetOtpExpiresAt: expiresAt,
+				},
 			}
+		);
+
+		const emailResult = await sendAdminResetOtpEmail({
+			to: normalizedEmail,
+			userName: account.userName,
+			otp: otpCode,
+			expiresInMinutes: resetTokenExpiryMinutes,
+		});
+
+		if (!emailResult.sent) {
+			if (emailResult.reason === 'smtp-not-configured') {
+				return res.status(503).json({ message: 'OTP email service is not configured' });
+			}
+
+			return res.status(500).json({ message: 'Failed to send OTP email' });
 		}
-
-		if (!targetAccountType) {
-			return res.status(200).json({ message: genericMessage });
-		}
-
-		const resetToken = crypto.randomBytes(24).toString('hex');
-		const expiresAt = Date.now() + resetTokenExpiryMinutes * 60 * 1000;
-
-		activeResetToken = {
-			token: resetToken,
-			userName: targetUserName,
-			accountType: targetAccountType,
-			expiresAt,
-		};
 
 		const response = {
-			message: genericMessage,
+			message: 'OTP has been sent to your registered email.',
 		};
 
-		// Return token only for local development testing.
+		// Return OTP only for local development testing.
 		if (process.env.NODE_ENV !== 'production') {
-			response.resetToken = resetToken;
+			response.devOtp = otpCode;
 			response.expiresInMinutes = resetTokenExpiryMinutes;
 		}
 
@@ -2111,10 +3108,12 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 
 app.post('/api/auth/reset-password', async (req, res) => {
 	try {
-		const { token, newPassword, confirmPassword } = req.body || {};
+		const { userName, email, otp, newPassword, confirmPassword } = req.body || {};
 
-		if (!token || !newPassword || !confirmPassword) {
-			return res.status(400).json({ message: 'Token and password fields are required' });
+		if (!userName || !email || !otp || !newPassword || !confirmPassword) {
+			return res.status(400).json({
+				message: 'Username, email, OTP, and password fields are required',
+			});
 		}
 
 		if (newPassword !== confirmPassword) {
@@ -2128,41 +3127,104 @@ app.post('/api/auth/reset-password', async (req, res) => {
 			});
 		}
 
-		if (!activeResetToken || token !== activeResetToken.token) {
-			return res.status(400).json({ message: 'Invalid reset token' });
+		if (!/^\d{6}$/.test(String(otp).trim())) {
+			return res.status(400).json({ message: 'OTP must be a 6-digit code' });
 		}
 
-		if (Date.now() > activeResetToken.expiresAt) {
-			activeResetToken = null;
-			return res.status(400).json({ message: 'Reset token has expired' });
+		const normalizedUserName = String(userName).trim().toLowerCase();
+		const normalizedEmail = String(email).trim().toLowerCase();
+
+		const account = await AdminSignIn.findOne({
+			userNameNormalized: normalizedUserName,
+			email: normalizedEmail,
+			isActive: true,
+		});
+
+		if (!account || !String(account.resetOtpHash || '').trim()) {
+			return res.status(400).json({ message: 'Invalid OTP' });
+		}
+
+		if (!account.resetOtpExpiresAt || Date.now() > new Date(account.resetOtpExpiresAt).getTime()) {
+			await AdminSignIn.updateOne(
+				{ _id: account._id },
+				{ $set: { resetOtpHash: '', resetOtpExpiresAt: null } }
+			);
+			return res.status(400).json({ message: 'OTP has expired' });
+		}
+
+		const isOtpValid = await bcrypt.compare(String(otp).trim(), String(account.resetOtpHash));
+		if (!isOtpValid) {
+			return res.status(400).json({ message: 'Invalid OTP' });
 		}
 
 		const newPasswordHash = await bcrypt.hash(newPassword, 10);
-
-		if (activeResetToken.accountType === 'main-admin') {
-			adminPasswordHash = newPasswordHash;
-		} else if (activeResetToken.accountType === 'approved-admin') {
-			if (!accessRequestStore || typeof accessRequestStore.updatePasswordByUserName !== 'function') {
-				return res.status(500).json({ message: 'Password store is not ready' });
+		await AdminSignIn.updateOne(
+			{ _id: account._id },
+			{
+				$set: {
+					passwordHash: newPasswordHash,
+					resetOtpHash: '',
+					resetOtpExpiresAt: null,
+				},
 			}
+		);
 
-			const updatedUser = await accessRequestStore.updatePasswordByUserName(
-				activeResetToken.userName,
-				newPasswordHash
-			);
+		const successMailResult = await sendAdminPasswordChangedSuccessEmail({
+			to: normalizedEmail,
+			userName: account.userName,
+		});
 
-			if (!updatedUser) {
-				return res.status(400).json({ message: 'Account is not eligible for password reset' });
-			}
-		} else {
-			return res.status(400).json({ message: 'Invalid reset token' });
-		}
-
-		activeResetToken = null;
-
-		return res.status(200).json({ message: 'Password updated successfully' });
+		return res.status(200).json({
+			message: 'Password updated successfully',
+			successEmailSent: successMailResult.sent,
+			successEmailStatus: successMailResult.reason || 'sent',
+		});
 	} catch (_error) {
 		return res.status(500).json({ message: 'Failed to reset password' });
+	}
+});
+
+app.post('/api/auth/verify-reset-otp', async (req, res) => {
+	try {
+		const { userName, email, otp } = req.body || {};
+
+		if (!userName || !email || !otp) {
+			return res.status(400).json({ message: 'Username, email, and OTP are required' });
+		}
+
+		if (!/^\d{6}$/.test(String(otp).trim())) {
+			return res.status(400).json({ message: 'OTP must be a 6-digit code' });
+		}
+
+		const normalizedUserName = String(userName).trim().toLowerCase();
+		const normalizedEmail = String(email).trim().toLowerCase();
+
+		const account = await AdminSignIn.findOne({
+			userNameNormalized: normalizedUserName,
+			email: normalizedEmail,
+			isActive: true,
+		});
+
+		if (!account || !String(account.resetOtpHash || '').trim()) {
+			return res.status(400).json({ message: 'Invalid OTP' });
+		}
+
+		if (!account.resetOtpExpiresAt || Date.now() > new Date(account.resetOtpExpiresAt).getTime()) {
+			await AdminSignIn.updateOne(
+				{ _id: account._id },
+				{ $set: { resetOtpHash: '', resetOtpExpiresAt: null } }
+			);
+			return res.status(400).json({ message: 'OTP has expired' });
+		}
+
+		const isOtpValid = await bcrypt.compare(String(otp).trim(), String(account.resetOtpHash));
+		if (!isOtpValid) {
+			return res.status(400).json({ message: 'Invalid OTP' });
+		}
+
+		return res.status(200).json({ message: 'OTP verified successfully' });
+	} catch (_error) {
+		return res.status(500).json({ message: 'Failed to verify OTP' });
 	}
 });
 
@@ -2213,6 +3275,7 @@ async function startServer() {
 		console.log('MongoDB connected');
 
 		await seedDefaultAdvertisementsIfEmpty();
+		await ensureDefaultMainAdminAccount();
 
 		accessRequestStore = await initializeAccessRequestStore();
 
