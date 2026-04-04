@@ -92,16 +92,56 @@ function formatReminderDate(value) {
   });
 }
 
-function isReminderWithinTwoDays(value) {
+function getReminderStatusDetails(value) {
   const reminderDate = new Date(value);
   if (Number.isNaN(reminderDate.getTime())) {
-    return false;
+    return null;
   }
 
   const now = new Date();
-  const diffMs = reminderDate.getTime() - now.getTime();
-  const twoDaysMs = 2 * 24 * 60 * 60 * 1000;
-  return diffMs >= 0 && diffMs <= twoDaysMs;
+  const oneDayMs = 24 * 60 * 60 * 1000;
+
+  const reminderDayUtc = Date.UTC(
+    reminderDate.getFullYear(),
+    reminderDate.getMonth(),
+    reminderDate.getDate()
+  );
+  const nowDayUtc = Date.UTC(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  );
+
+  const diffDays = Math.round((reminderDayUtc - nowDayUtc) / oneDayMs);
+
+  if (diffDays === 0) {
+    return {
+      message: "Reminder: Today is Event Day",
+      textColor: "#991b1b",
+      background: "#fee2e2",
+      border: "1px solid #fecaca",
+    };
+  }
+
+  if (diffDays === 1) {
+    return {
+      message: "Reminder: due within 1 day",
+      textColor: "#9a3412",
+      background: "#ffedd5",
+      border: "1px solid #fed7aa",
+    };
+  }
+
+  if (diffDays === 2) {
+    return {
+      message: "Reminder: due within 2 days",
+      textColor: "#92400e",
+      background: "#fef3c7",
+      border: "1px solid #fde68a",
+    };
+  }
+
+  return null;
 }
 
 function loadSeenMemberNotificationIds() {
@@ -1305,7 +1345,8 @@ export default function LearnthruDashboard({ onLogout }) {
                 No reminders yet. Use +Add to create one.
               </div>
             ) : reminders.map((r, i) => {
-              const isReminderSoon = isReminderWithinTwoDays(r.date);
+              const reminderStatusDetails = getReminderStatusDetails(r.date);
+              const isReminderSoon = Boolean(reminderStatusDetails);
 
               return (
               <div key={i} className={`reminder-item${isReminderSoon ? " reminder-soon" : ""}`}>
@@ -1345,9 +1386,22 @@ export default function LearnthruDashboard({ onLogout }) {
                   <div style={{ width: "100%" }}>
                     <div style={{ fontSize: 12.5, fontWeight: 700, color: "#111827" }}>{r.title}</div>
                     <div style={{ fontSize: 11.5, color: "#9ca3af" }}>{formatReminderDate(r.date)}</div>
-                    {isReminderSoon ? (
-                      <div style={{ marginTop: 4, fontSize: 11, fontWeight: 800, color: "#92400e" }}>
-                        Reminder: due within 2 days
+                    {reminderStatusDetails ? (
+                      <div
+                        style={{
+                          marginTop: 5,
+                          fontSize: 11,
+                          fontWeight: 800,
+                          color: reminderStatusDetails.textColor,
+                          background: reminderStatusDetails.background,
+                          border: reminderStatusDetails.border,
+                          borderRadius: 999,
+                          padding: "3px 8px",
+                          display: "inline-flex",
+                          alignItems: "center",
+                        }}
+                      >
+                        {reminderStatusDetails.message}
                       </div>
                     ) : null}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 7, width: "100%" }}>

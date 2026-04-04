@@ -38,8 +38,11 @@ export default function Settings({
 	initialSection = 'dashboard-settings',
 }) {
 	const [items, setItems] = useState([]);
+	const [approvedItems, setApprovedItems] = useState([]);
 	const [loading, setLoading] = useState(true);
+	const [approvedLoading, setApprovedLoading] = useState(true);
 	const [actionId, setActionId] = useState('');
+	const [approvedActionId, setApprovedActionId] = useState('');
 	const [error, setError] = useState('');
 	const [notice, setNotice] = useState('');
 	const [selectedSection, setSelectedSection] = useState(initialSection);
@@ -89,6 +92,32 @@ export default function Settings({
 		}
 	}, []);
 
+	const loadApprovedRequests = useCallback(async () => {
+		setApprovedLoading(true);
+		setError('');
+
+		try {
+			const token = getToken();
+			const response = await fetch(`${API_BASE_URL}/api/access-requests/approved`, {
+				method: 'GET',
+				headers: {
+					Authorization: `Bearer ${token}`,
+				},
+			});
+
+			const data = await response.json().catch(() => ({}));
+			if (!response.ok) {
+				throw new Error(data.message || 'Failed to load approved requests');
+			}
+
+			setApprovedItems(Array.isArray(data.items) ? data.items : []);
+		} catch (loadError) {
+			setError(loadError.message || 'Failed to load approved requests');
+		} finally {
+			setApprovedLoading(false);
+		}
+	}, []);
+
 	useEffect(() => {
 		setSelectedSection(initialSection);
 	}, [initialSection]);
@@ -96,8 +125,9 @@ export default function Settings({
 	useEffect(() => {
 		if (selectedSection === 'new-access') {
 			loadPendingRequests();
+			loadApprovedRequests();
 		}
-	}, [loadPendingRequests, selectedSection]);
+	}, [loadApprovedRequests, loadPendingRequests, selectedSection]);
 
 	useEffect(() => {
 		if (typeof onPendingCountChange === 'function') {
@@ -191,6 +221,9 @@ aside,
 			}
 
 			setItems((prev) => prev.filter((item) => item._id !== requestId));
+			if (action === 'approve') {
+				loadApprovedRequests();
+			}
 			const baseMessage = data.message || `Request ${action}d successfully`;
 			if (data.emailSent === false) {
 				const emailStatusTextByCode = {
@@ -211,6 +244,45 @@ aside,
 			setError(reviewError.message || 'Failed to update request status');
 		} finally {
 			setActionId('');
+		}
+	};
+
+	const handleDeleteApproved = async (requestId) => {
+		if (!requestId) {
+			return;
+		}
+
+		const shouldDelete = window.confirm(
+			'Are you sure you want to delete this approved access? This will disable that admin account.'
+		);
+		if (!shouldDelete) {
+			return;
+		}
+
+		setApprovedActionId(requestId);
+		setError('');
+		setNotice('');
+
+		try {
+			const token = getToken();
+			const response = await fetch(`${API_BASE_URL}/api/access-requests/approved/${requestId}`, {
+				method: 'DELETE',
+				headers: {
+					Authorization: `Bearer ${token}`,
+				},
+			});
+
+			const data = await response.json().catch(() => ({}));
+			if (!response.ok) {
+				throw new Error(data.message || 'Failed to delete approved access');
+			}
+
+			setApprovedItems((prev) => prev.filter((item) => item._id !== requestId));
+			setNotice(data.message || 'Approved access removed successfully');
+		} catch (deleteError) {
+			setError(deleteError.message || 'Failed to delete approved access');
+		} finally {
+			setApprovedActionId('');
 		}
 	};
 
@@ -529,6 +601,107 @@ aside,
 													Reject
 												</button>
 											</div>
+										</div>
+									);
+								})}
+							</div>
+						) : null}
+					</div>
+
+					<div style={{ marginTop: 28 }}>
+						<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+							<div>
+								<h3 style={{ margin: 0, fontSize: 18, color: '#111827' }}>Approved Access Users</h3>
+								<p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>
+									View who has been confirmed and remove access if needed.
+								</p>
+							</div>
+
+							<button
+								onClick={loadApprovedRequests}
+								style={{
+									background: '#f1f5f9',
+									border: '1px solid #d1d5db',
+									borderRadius: 10,
+									padding: '9px 14px',
+									fontWeight: 700,
+									cursor: 'pointer',
+									color: '#334155',
+								}}
+							>
+								Refresh Approved
+							</button>
+						</div>
+
+						{approvedLoading ? (
+							<div style={{ padding: '14px 0', color: '#6b7280', fontSize: 13 }}>
+								Loading approved users...
+							</div>
+						) : null}
+
+						{!approvedLoading && approvedItems.length === 0 ? (
+							<div
+								style={{
+									background: '#f8fafc',
+									border: '1px dashed #cbd5e1',
+									borderRadius: 12,
+									padding: '18px',
+									color: '#64748b',
+									fontSize: 13,
+								}}
+							>
+								No approved access users yet.
+							</div>
+						) : null}
+
+						{!approvedLoading && approvedItems.length > 0 ? (
+							<div style={{ display: 'grid', gap: 10 }}>
+								{approvedItems.map((item) => {
+									const isBusy = approvedActionId === item._id;
+
+									return (
+										<div
+											key={item._id}
+											style={{
+												border: '1px solid #e5e7eb',
+												borderRadius: 12,
+												padding: '14px 12px',
+												display: 'flex',
+												justifyContent: 'space-between',
+												gap: 12,
+												alignItems: 'center',
+												flexWrap: 'wrap',
+											}}
+										>
+											<div>
+												<div style={{ fontSize: 15, fontWeight: 700, color: '#111827' }}>
+													{item.userName}
+												</div>
+												<div style={{ fontSize: 13, color: '#4b5563', marginTop: 2 }}>{item.email}</div>
+												<div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
+													Approved By: {item.reviewedBy || '-'}
+												</div>
+												<div style={{ fontSize: 12, color: '#9ca3af', marginTop: 2 }}>
+													Approved At: {formatDate(item.reviewedAt)}
+												</div>
+											</div>
+
+											<button
+												onClick={() => handleDeleteApproved(item._id)}
+												disabled={isBusy}
+												style={{
+													border: 'none',
+													borderRadius: 10,
+													padding: '9px 12px',
+													background: '#ef4444',
+													color: '#fff',
+													fontWeight: 700,
+													cursor: isBusy ? 'not-allowed' : 'pointer',
+													opacity: isBusy ? 0.7 : 1,
+												}}
+											>
+												{isBusy ? 'Deleting...' : 'Delete'}
+											</button>
 										</div>
 									);
 								})}

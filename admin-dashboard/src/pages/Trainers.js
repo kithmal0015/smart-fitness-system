@@ -9,6 +9,33 @@ import "../styles/Members.css";
 
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
 const AUTH_TOKEN_KEY = 'ff_admin_token';
+const TRAINER_ROLE_OPTIONS = ['Strength Coach', 'Yoga Instructor', 'Cardio Trainer'];
+
+function normalizeTrainerIdInput(value) {
+	const raw = String(value || '').toUpperCase();
+	const collapsed = raw.replace(/\s+/g, '');
+	const modernMatch = collapsed.match(/^([MF])T-?([0-9O]*)$/);
+	if (modernMatch) {
+		const prefix = modernMatch[1] === 'F' ? 'FT' : 'MT';
+		const digits = String(modernMatch[2] || '').replace(/O/g, '0');
+		if (!digits) {
+			return `${prefix}-`;
+		}
+		return `${prefix}-${digits}`;
+	}
+
+	const legacyMatch = collapsed.match(/^T-([MF])([0-9O]*)$/);
+	if (legacyMatch) {
+		const prefix = legacyMatch[1] === 'F' ? 'FT' : 'MT';
+		const digits = String(legacyMatch[2] || '').replace(/O/g, '0');
+		if (!digits) {
+			return `${prefix}-`;
+		}
+		return `${prefix}-${digits}`;
+	}
+
+	return collapsed;
+}
 
 function getToken() {
 	return localStorage.getItem(AUTH_TOKEN_KEY) || sessionStorage.getItem(AUTH_TOKEN_KEY);
@@ -82,6 +109,7 @@ const initialFormState = {
 	firstName: '',
 	lastName: '',
 	email: '',
+	role: 'Strength Coach',
 	gender: 'Male',
 	dob: '',
 	status: 'Active',
@@ -203,6 +231,9 @@ export default function Trainers({ accent, activeNav }) {
 			firstName: String(trainer.firstName || ''),
 			lastName: String(trainer.lastName || ''),
 			email: String(trainer.email || ''),
+			role: TRAINER_ROLE_OPTIONS.includes(String(trainer.role || ''))
+				? String(trainer.role)
+				: 'Strength Coach',
 			gender: String(trainer.gender || 'Male'),
 			dob: trainer.dob ? String(trainer.dob).slice(0, 10) : '',
 			status: String(trainer.status || 'Active'),
@@ -278,9 +309,10 @@ export default function Trainers({ accent, activeNav }) {
 	}, [activeNav, isAddModalOpen]);
 
 	const handleFormChange = (field, value) => {
+		const resolvedValue = field === 'trainerId' ? normalizeTrainerIdInput(value) : value;
 		setFormData((prev) => ({
 			...prev,
-			[field]: value,
+			[field]: resolvedValue,
 		}));
 	};
 
@@ -318,6 +350,7 @@ export default function Trainers({ accent, activeNav }) {
 					firstName: formData.firstName,
 					lastName: formData.lastName,
 					email: formData.email,
+					role: formData.role,
 					gender: formData.gender,
 					dob: formData.dob,
 					status: formData.status,
@@ -463,7 +496,8 @@ export default function Trainers({ accent, activeNav }) {
 			String(trainer.trainerId || '').toLowerCase().includes(query) ||
 			String(trainer.firstName || '').toLowerCase().includes(query) ||
 			String(trainer.lastName || '').toLowerCase().includes(query) ||
-			String(trainer.email || '').toLowerCase().includes(query)
+			String(trainer.email || '').toLowerCase().includes(query) ||
+			String(trainer.role || '').toLowerCase().includes(query)
 		);
 	};
 
@@ -492,6 +526,7 @@ export default function Trainers({ accent, activeNav }) {
 								<th>First Name</th>
 								<th>Last Name</th>
 								<th>Email Address</th>
+								<th>Role</th>
 								<th>Gender</th>
 								<th>Age</th>
 								<th>Date of Birth</th>
@@ -507,6 +542,7 @@ export default function Trainers({ accent, activeNav }) {
 									<td>{trainer.firstName}</td>
 									<td>{trainer.lastName}</td>
 									<td>{trainer.email}</td>
+									<td>{trainer.role || 'Strength Coach'}</td>
 									<td>{trainer.gender}</td>
 									<td>{trainer.age}</td>
 									<td>{new Date(trainer.dob).toLocaleDateString()}</td>
@@ -703,6 +739,7 @@ export default function Trainers({ accent, activeNav }) {
 									disabled={isEditMode}
 									onChange={(event) => handleFormChange('trainerId', event.target.value)}
 									placeholder="T-M004"
+									placeholder="FT-005"
 									style={{
 										padding: '10px 11px',
 										borderRadius: 10,
@@ -743,6 +780,21 @@ export default function Trainers({ accent, activeNav }) {
 									onChange={(event) => handleFormChange('email', event.target.value)}
 									style={{ padding: '10px 11px', borderRadius: 10, border: '1px solid #d1d5db' }}
 								/>
+							</div>
+
+							<div style={{ display: 'grid', gap: 6 }}>
+								<label style={{ fontSize: 12, color: '#374151', fontWeight: 600 }}>Role</label>
+								<select
+									value={formData.role}
+									onChange={(event) => handleFormChange('role', event.target.value)}
+									style={{ padding: '10px 11px', borderRadius: 10, border: '1px solid #d1d5db' }}
+								>
+									{TRAINER_ROLE_OPTIONS.map((roleOption) => (
+										<option key={roleOption} value={roleOption}>
+											{roleOption}
+										</option>
+									))}
+								</select>
 							</div>
 
 							<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
@@ -936,6 +988,7 @@ export default function Trainers({ accent, activeNav }) {
 								<div><strong>ID:</strong> {selectedTrainer.trainerId}</div>
 								<div><strong>Name:</strong> {selectedTrainer.firstName} {selectedTrainer.lastName}</div>
 								<div><strong>Email:</strong> {selectedTrainer.email}</div>
+								<div><strong>Role:</strong> {selectedTrainer.role || 'Strength Coach'}</div>
 								<div><strong>Gender:</strong> {selectedTrainer.gender}</div>
 								<div><strong>Age:</strong> {selectedTrainer.age}</div>
 								<div><strong>DOB:</strong> {new Date(selectedTrainer.dob).toLocaleDateString()}</div>

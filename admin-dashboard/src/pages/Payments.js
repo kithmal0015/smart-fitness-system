@@ -15,6 +15,33 @@ const PLAN_PRICE_MAP = {
 	Yearly: 24000,
 };
 
+const BANK_OPTIONS = [
+	"BOC",
+	"People's Bank",
+	"Commercial Bank",
+	"HNB",
+	"Sampath Bank",
+	"NSB",
+];
+
+function getTrainerMonthlySalaryByRole(role) {
+	const normalizedRole = String(role || "").trim().toLowerCase();
+
+	if (normalizedRole === "strength coach" || normalizedRole === "strength instructor") {
+		return 55000;
+	}
+
+	if (normalizedRole === "yoga instructor") {
+		return 45000;
+	}
+
+	if (normalizedRole === "cardio trainer" || normalizedRole === "cardio instructor" || normalizedRole === "cradio instructr") {
+		return 50000;
+	}
+
+	return 0;
+}
+
 function getToken() {
 	return localStorage.getItem(AUTH_TOKEN_KEY) || sessionStorage.getItem(AUTH_TOKEN_KEY);
 }
@@ -106,32 +133,27 @@ function normalizeMemberPaymentRow(member, maleCountRef, femaleCountRef) {
 	};
 }
 
-const TRAINER_PAYMENTS = [
-	{
-		trainerId: "T-021",
-		name: "Amila Jayasuriya",
-		role: "Strength Coach",
-		monthSalary: "LKR 45,000",
-		payDate: "2026-03-11",
-		status: "Done",
-	},
-	{
-		trainerId: "T-027",
-		name: "Dinithi Perera",
-		role: "Yoga Instructor",
-		monthSalary: "LKR 38,000",
-		payDate: "2026-03-20",
-		status: "Pending",
-	},
-	{
-		trainerId: "T-033",
-		name: "Sandeep Raj",
-		role: "Cardio Trainer",
-		monthSalary: "LKR 41,000",
-		payDate: "2026-03-25",
-		status: "Done",
-	},
-];
+function normalizeTrainerPaymentRow(trainer) {
+	const firstName = String((trainer && trainer.firstName) || "").trim();
+	const lastName = String((trainer && trainer.lastName) || "").trim();
+	const fullName = `${firstName} ${lastName}`.trim() || "Unknown Trainer";
+	const gender = String((trainer && trainer.gender) || "").trim().toLowerCase();
+	const monthSalary = Number((trainer && trainer.monthSalary) || 0);
+	const resolvedMonthSalary = monthSalary > 0 ? monthSalary : getTrainerMonthlySalaryByRole(trainer && trainer.role);
+
+	return {
+		_id: String((trainer && trainer._id) || ""),
+		trainerId: String((trainer && trainer.trainerId) || ""),
+		name: fullName,
+		role: String((trainer && trainer.role) || "-"),
+		gender,
+		bank: String((trainer && trainer.paymentBank) || "").trim(),
+		accountNumber: String((trainer && trainer.paymentAccountNumber) || "").trim(),
+		monthSalary: Number.isFinite(resolvedMonthSalary) ? resolvedMonthSalary : 0,
+		payDate: formatDateText(trainer && trainer.payDate),
+		status: String((trainer && trainer.paymentStatus) || "Pending").trim() || "Pending",
+	};
+}
 
 function StatusChip({ status, accent, accentBg }) {
 	const normalizedStatus = String(status || "").trim().toLowerCase();
@@ -256,7 +278,22 @@ export default function Payments({ accent = "#d5f165", accentBg = "#f4fcd9" }) {
 	const [memberPayments, setMemberPayments] = useState([]);
 	const [membersLoading, setMembersLoading] = useState(true);
 	const [membersError, setMembersError] = useState("");
+	const [trainerPayments, setTrainerPayments] = useState([]);
+	const [trainersLoading, setTrainersLoading] = useState(true);
+	const [trainersError, setTrainersError] = useState("");
+	const [isTrainerPaying, setIsTrainerPaying] = useState("");
 	const memberTableHeaders = ["Member ID", "Member Name", "Admission", "Plan", "Amount", "Payment Date", "Due Date", "Status", "Update"];
+	const trainerTableHeaders = [
+		"Trainer ID",
+		"Trainer Name",
+		"Role",
+		"Bank",
+		"Account Number",
+		"Month Salary",
+		"Pay Date",
+		"Status",
+		"Action",
+	];
 
 	const loadMemberPayments = useCallback(async () => {
 		setMembersLoading(true);
@@ -300,6 +337,42 @@ export default function Payments({ accent = "#d5f165", accentBg = "#f4fcd9" }) {
 	useEffect(() => {
 		loadMemberPayments();
 	}, [loadMemberPayments]);
+
+	const loadTrainerPayments = useCallback(async () => {
+		setTrainersLoading(true);
+		setTrainersError("");
+
+		try {
+			const token = getToken();
+			if (!token) {
+				throw new Error("Please sign in again to load trainers");
+			}
+
+			const response = await fetch(`${API_BASE_URL}/api/trainers`, {
+				method: "GET",
+				headers: {
+					Authorization: `Bearer ${token}`,
+				},
+			});
+
+			const data = await response.json().catch(() => ({}));
+			if (!response.ok) {
+				throw new Error(data.message || "Failed to load trainers for payments");
+			}
+
+			const items = Array.isArray(data.items) ? data.items : [];
+			setTrainerPayments(items.map((item) => normalizeTrainerPaymentRow(item)));
+		} catch (error) {
+			setTrainersError(error.message || "Failed to load trainers for payments");
+			setTrainerPayments([]);
+		} finally {
+			setTrainersLoading(false);
+		}
+	}, []);
+
+	useEffect(() => {
+		loadTrainerPayments();
+	}, [loadTrainerPayments]);
 
 	const handlePlanChange = (memberId, selectedPlan) => {
 		const nextAmount = PLAN_PRICE_MAP[selectedPlan] || 0;
@@ -346,6 +419,91 @@ export default function Payments({ accent = "#d5f165", accentBg = "#f4fcd9" }) {
 		() => memberPayments.filter((item) => String(item.gender || "") === "female"),
 		[memberPayments]
 	);
+
+	const maleTrainerPayments = useMemo(
+		() => trainerPayments.filter((item) => String(item.gender || "") !== "female"),
+		[trainerPayments]
+	);
+
+	const femaleTrainerPayments = useMemo(
+		() => trainerPayments.filter((item) => String(item.gender || "") === "female"),
+		[trainerPayments]
+	);
+
+	const handleTrainerFieldChange = useCallback((trainerId, field, value) => {
+		setTrainerPayments((prev) =>
+			prev.map((row) =>
+				row.trainerId === trainerId
+					? {
+						...row,
+						[field]: value,
+						...(field === "status" ? {} : { status: "Pending" }),
+					}
+					: row
+			)
+		);
+	}, []);
+
+	const handleTrainerPay = useCallback(async (trainer) => {
+		const trainerId = String((trainer && trainer.trainerId) || "").trim();
+		const bank = String((trainer && trainer.bank) || "").trim();
+		const accountNumber = String((trainer && trainer.accountNumber) || "").trim();
+		const monthSalary = Number((trainer && trainer.monthSalary) || 0);
+
+		if (!bank) {
+			setTrainersError("Please select a bank before paying trainer salary");
+			return;
+		}
+
+		if (!/^\d{6,20}$/.test(accountNumber)) {
+			setTrainersError("Account number must be 6 to 20 digits");
+			return;
+		}
+
+		if (!Number.isFinite(monthSalary) || monthSalary <= 0) {
+			setTrainersError("Month salary must be greater than 0");
+			return;
+		}
+
+		setTrainersError("");
+		setIsTrainerPaying(trainerId);
+
+		try {
+			const token = getToken();
+			if (!token) {
+				throw new Error("Please sign in again to continue");
+			}
+
+			const response = await fetch(`${API_BASE_URL}/api/trainers/${encodeURIComponent(trainerId)}/pay`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${token}`,
+				},
+				body: JSON.stringify({
+					bank,
+					accountNumber,
+				}),
+			});
+
+			const data = await response.json().catch(() => ({}));
+			if (!response.ok) {
+				throw new Error(data.message || "Failed to pay trainer salary");
+			}
+
+			setTrainerPayments((prev) =>
+				prev.map((row) =>
+					row.trainerId === trainerId
+						? normalizeTrainerPaymentRow(data.item || row)
+						: row
+				)
+			);
+		} catch (error) {
+			setTrainersError(error.message || "Failed to pay trainer salary");
+		} finally {
+			setIsTrainerPaying("");
+		}
+	}, []);
 
 	const renderMemberRow = useCallback((item) => (
 		<>
@@ -411,27 +569,96 @@ export default function Payments({ accent = "#d5f165", accentBg = "#f4fcd9" }) {
 		};
 	}, []);
 
-	const activeConfig = useMemo(() => {
-		if (activePaymentType === "trainers") {
-			return {
-				title: "Trainers Payment",
-				headers: ["Trainer ID", "Trainer Name", "Role", "Month Salary", "Pay Date", "Status"],
-				rows: TRAINER_PAYMENTS,
-				renderRow: (item) => (
-					<>
-						<td style={{ padding: "12px 16px", fontSize: 13, fontWeight: 700, color: "#111827" }}>{item.trainerId}</td>
-						<td style={{ padding: "12px 16px", fontSize: 13, color: "#1f2937" }}>{item.name}</td>
-						<td style={{ padding: "12px 16px", fontSize: 13, color: "#1f2937" }}>{item.role}</td>
-						<td style={{ padding: "12px 16px", fontSize: 13, fontWeight: 700, color: "#111827" }}>{item.monthSalary}</td>
-						<td style={{ padding: "12px 16px", fontSize: 13, color: "#4b5563" }}>{item.payDate}</td>
-						<td style={{ padding: "12px 16px" }}><StatusChip status={item.status} accent={accent} accentBg={accentBg} /></td>
-					</>
-				),
-			};
-		}
-
-		return null;
-	}, [activePaymentType, accent, accentBg]);
+	const renderTrainerRow = useCallback((item) => (
+		<>
+			<td style={{ padding: "12px 16px", fontSize: 13, fontWeight: 700, color: "#111827" }}>{item.trainerId}</td>
+			<td style={{ padding: "12px 16px", fontSize: 13, color: "#1f2937" }}>{item.name}</td>
+			<td style={{ padding: "12px 16px", fontSize: 13, color: "#1f2937" }}>{item.role}</td>
+			<td style={{ padding: "12px 16px", minWidth: 170 }}>
+				<select
+					value={item.bank}
+					onChange={(event) => handleTrainerFieldChange(item.trainerId, "bank", event.target.value)}
+					style={{
+						border: "1px solid #d1d5db",
+						borderRadius: 8,
+						padding: "6px 10px",
+						fontSize: 12.5,
+						fontWeight: 600,
+						color: "#0f172a",
+						background: "#fff",
+						width: "100%",
+					}}
+				>
+					<option value="">Select Bank</option>
+					{BANK_OPTIONS.map((bank) => (
+						<option key={bank} value={bank}>{bank}</option>
+					))}
+				</select>
+			</td>
+			<td style={{ padding: "12px 16px", minWidth: 170 }}>
+				<input
+					type="text"
+					value={item.accountNumber}
+					onChange={(event) =>
+						handleTrainerFieldChange(
+							item.trainerId,
+							"accountNumber",
+							event.target.value.replace(/\D/g, "").slice(0, 20)
+						)
+					}
+					placeholder="Enter account number"
+					style={{
+						border: "1px solid #d1d5db",
+						borderRadius: 8,
+						padding: "6px 10px",
+						fontSize: 12.5,
+						fontWeight: 600,
+						color: "#0f172a",
+						background: "#fff",
+						width: "100%",
+					}}
+				/>
+			</td>
+			<td style={{ padding: "12px 16px", minWidth: 150 }}>
+				<div
+					style={{
+						border: "1px solid #d1d5db",
+						borderRadius: 8,
+						padding: "6px 10px",
+						fontSize: 12.5,
+						fontWeight: 700,
+						color: "#0f172a",
+						background: "#f8fafc",
+						width: "100%",
+					}}
+				>
+					{formatMoney(item.monthSalary)}
+				</div>
+			</td>
+			<td style={{ padding: "12px 16px", fontSize: 13, color: "#4b5563" }}>{item.payDate}</td>
+			<td style={{ padding: "12px 16px" }}><StatusChip status={item.status} accent={accent} accentBg={accentBg} /></td>
+			<td style={{ padding: "12px 16px" }}>
+				<button
+					type="button"
+					onClick={() => handleTrainerPay(item)}
+					disabled={isTrainerPaying === item.trainerId}
+					style={{
+						border: "none",
+						borderRadius: 8,
+						padding: "6px 12px",
+						fontSize: 12,
+						fontWeight: 700,
+						cursor: isTrainerPaying === item.trainerId ? "not-allowed" : "pointer",
+						background: "#1e293b",
+						color: "#ffffff",
+						opacity: isTrainerPaying === item.trainerId ? 0.65 : 1,
+					}}
+				>
+					{isTrainerPaying === item.trainerId ? "Paying..." : "Pay"}
+				</button>
+			</td>
+		</>
+	), [accent, accentBg, handleTrainerFieldChange, handleTrainerPay, isTrainerPaying]);
 
 	return (
 		<div style={{ display: "grid", gap: 16 }}>
@@ -448,6 +675,12 @@ export default function Payments({ accent = "#d5f165", accentBg = "#f4fcd9" }) {
 			{activePaymentType === "members" && membersError ? (
 				<div style={{ background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", borderRadius: 10, padding: "10px 12px", fontWeight: 600, fontSize: 13 }}>
 					{membersError}
+				</div>
+			) : null}
+
+			{activePaymentType === "trainers" && trainersError ? (
+				<div style={{ background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", borderRadius: 10, padding: "10px 12px", fontWeight: 600, fontSize: 13 }}>
+					{trainersError}
 				</div>
 			) : null}
 
@@ -520,14 +753,36 @@ export default function Payments({ accent = "#d5f165", accentBg = "#f4fcd9" }) {
 						getRowStyle={getMemberRowStyle}
 					/>
 				</div>
+			) : trainersLoading ? (
+				<section
+					style={{
+						background: "#fff",
+						borderRadius: 16,
+						border: "1px solid #e5e7eb",
+						padding: "18px 16px",
+						fontWeight: 600,
+						color: "#64748b",
+					}}
+				>
+					Loading trainers payment table...
+				</section>
 			) : (
-				<DataTable
-					title={activeConfig.title}
-					headers={activeConfig.headers}
-					rows={activeConfig.rows}
-					accentBg={accentBg}
-					renderRow={activeConfig.renderRow}
-				/>
+				<div style={{ display: "grid", gap: 14 }}>
+					<DataTable
+						title="Male Trainers Payment"
+						headers={trainerTableHeaders}
+						rows={maleTrainerPayments}
+						accentBg={accentBg}
+						renderRow={renderTrainerRow}
+					/>
+					<DataTable
+						title="Female Trainers Payment"
+						headers={trainerTableHeaders}
+						rows={femaleTrainerPayments}
+						accentBg={accentBg}
+						renderRow={renderTrainerRow}
+					/>
+				</div>
 			)}
 		</div>
 	);

@@ -417,6 +417,84 @@ const styles = `
     color: #555;
   }
 
+  .ff-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.72);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 16px;
+  }
+
+  .ff-modal-card {
+    width: 100%;
+    max-width: 460px;
+    background: #ffffff;
+    border-radius: 16px;
+    padding: 24px;
+    border: 1px solid #ecece9;
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.22);
+  }
+
+  .ff-modal-title {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 34px;
+    line-height: 0.95;
+    text-transform: uppercase;
+    color: #111111;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+
+  .ff-modal-title em {
+    font-style: italic;
+    color: #111111;
+  }
+
+  .ff-modal-sub {
+    font-size: 13px;
+    color: #777;
+    margin-bottom: 22px;
+  }
+
+  .ff-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 2px;
+  }
+
+  .ff-modal-cancel {
+    border: 1.5px solid #e3e3df;
+    background: #fff;
+    color: #555;
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-family: 'Barlow', sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+
+  .ff-modal-cancel:hover {
+    border-color: #111;
+    color: #111;
+  }
+
+  .ff-modal-submit {
+    width: auto;
+    min-width: 130px;
+    padding: 12px 16px;
+    font-size: 13px;
+    letter-spacing: 1px;
+    box-shadow: 0 2px 14px rgba(196,255,0,0.3);
+  }
+
   .ff-version {
     text-align: center;
     font-size: 10px;
@@ -457,6 +535,29 @@ export default function ForceFitLogin({ onLoginSuccess }) {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [isProcessingReset, setIsProcessingReset] = useState(false);
   const [isRequestingAccess, setIsRequestingAccess] = useState(false);
+
+  const [showForgotPasswordForm, setShowForgotPasswordForm] = useState(false);
+  const [forgotPasswordData, setForgotPasswordData] = useState({
+    userName: "",
+    email: "",
+    otp: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [hasSentForgotOtp, setHasSentForgotOtp] = useState(false);
+  const [isForgotOtpVerified, setIsForgotOtpVerified] = useState(false);
+  const [showForgotPasswordValues, setShowForgotPasswordValues] = useState(false);
+  const [forgotPasswordNotice, setForgotPasswordNotice] = useState("");
+  
+  // Request Access form state
+  const [showRequestAccessForm, setShowRequestAccessForm] = useState(false);
+  const [requestAccessData, setRequestAccessData] = useState({
+    userName: "",
+    email: "",
+    password: "",
+    confirmPassword: "",
+  });
+  const [showRequestAccessPassword, setShowRequestAccessPassword] = useState(false);
 
   const handleSignIn = async (e) => {
     e.preventDefault();
@@ -502,62 +603,157 @@ export default function ForceFitLogin({ onLoginSuccess }) {
       return;
     }
 
-    const requestedUserName = window.prompt(
-      "Enter your admin username",
-      userName.trim() || ""
-    );
+    setForgotPasswordData({
+      userName: userName.trim(),
+      email: "",
+      otp: "",
+      newPassword: "",
+      confirmPassword: "",
+    });
+    setHasSentForgotOtp(false);
+    setIsForgotOtpVerified(false);
+    setShowForgotPasswordValues(false);
+    setForgotPasswordNotice("");
+    setShowForgotPasswordForm(true);
+    setErrorMessage("");
+  };
 
-    if (!requestedUserName || !requestedUserName.trim()) {
+  const handleSendForgotOtp = async () => {
+    if (isProcessingReset) {
+      return;
+    }
+
+    if (!forgotPasswordData.userName.trim() || !forgotPasswordData.email.trim()) {
+      setErrorMessage("Username and email are required");
       return;
     }
 
     setIsProcessingReset(true);
+    setErrorMessage("");
+    setForgotPasswordNotice("");
+
     try {
       const forgotResponse = await fetch(`${API_BASE_URL}/api/auth/forgot-password`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ userName: requestedUserName.trim() }),
+        body: JSON.stringify({
+          userName: forgotPasswordData.userName.trim(),
+          email: forgotPasswordData.email.trim(),
+        }),
       });
 
       const forgotData = await forgotResponse.json().catch(() => ({}));
       if (!forgotResponse.ok) {
-        setErrorMessage(forgotData.message || "Failed to start password reset flow");
+        const backendMessage = String(forgotData.message || "").trim();
+        setErrorMessage(backendMessage || "Failed to start password reset flow. Please try again.");
         return;
       }
 
-      const resetTokenFromServer = forgotData.resetToken || "";
-      const tokenInput = window.prompt(
-        "Paste reset token (dev mode auto-filled)",
-        resetTokenFromServer
-      );
+      setHasSentForgotOtp(true);
+      setIsForgotOtpVerified(false);
+      setForgotPasswordData((prev) => ({
+        ...prev,
+        otp: "",
+        newPassword: "",
+        confirmPassword: "",
+      }));
+      setForgotPasswordNotice("OTP sent. Check your email and enter it below.");
+    } catch (_error) {
+      setErrorMessage("Cannot connect to server. Please try again.");
+    } finally {
+      setIsProcessingReset(false);
+    }
+  };
 
-      if (!tokenInput || !tokenInput.trim()) {
+  const handleVerifyForgotOtp = async () => {
+    if (isProcessingReset) {
+      return;
+    }
+
+    if (!hasSentForgotOtp) {
+      setErrorMessage("Send OTP first");
+      return;
+    }
+
+    if (!forgotPasswordData.otp.trim()) {
+      setErrorMessage("OTP is required");
+      return;
+    }
+
+    setIsProcessingReset(true);
+    setErrorMessage("");
+
+    try {
+      const verifyResponse = await fetch(`${API_BASE_URL}/api/auth/verify-reset-otp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userName: forgotPasswordData.userName.trim(),
+          email: forgotPasswordData.email.trim(),
+          otp: forgotPasswordData.otp.trim(),
+        }),
+      });
+
+      const verifyData = await verifyResponse.json().catch(() => ({}));
+      if (!verifyResponse.ok) {
+        setIsForgotOtpVerified(false);
+        setErrorMessage(String(verifyData.message || "OTP verification failed"));
         return;
       }
 
-      const newPassword = window.prompt(
-        "Enter new password (8+ chars with letters, numbers, symbols)"
-      );
-      if (!newPassword) {
-        return;
-      }
+      setIsForgotOtpVerified(true);
+      setForgotPasswordNotice("OTP verified. You can now set a new password.");
+    } catch (_error) {
+      setErrorMessage("Cannot connect to server. Please try again.");
+    } finally {
+      setIsProcessingReset(false);
+    }
+  };
 
-      const confirmPassword = window.prompt("Confirm new password");
-      if (!confirmPassword) {
-        return;
-      }
+  const handleForgotPasswordResetSubmit = async () => {
+    if (isProcessingReset) {
+      return;
+    }
 
+    if (!hasSentForgotOtp) {
+      setErrorMessage("Send OTP first");
+      return;
+    }
+
+    if (!isForgotOtpVerified) {
+      setErrorMessage("Verify OTP first");
+      return;
+    }
+
+    if (!forgotPasswordData.otp.trim()) {
+      setErrorMessage("OTP is required");
+      return;
+    }
+
+    if (!forgotPasswordData.newPassword || !forgotPasswordData.confirmPassword) {
+      setErrorMessage("New password and confirm password are required");
+      return;
+    }
+
+    setIsProcessingReset(true);
+    setErrorMessage("");
+
+    try {
       const resetResponse = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          token: tokenInput.trim(),
-          newPassword,
-          confirmPassword,
+          userName: forgotPasswordData.userName.trim(),
+          email: forgotPasswordData.email.trim(),
+          otp: forgotPasswordData.otp.trim(),
+          newPassword: forgotPasswordData.newPassword,
+          confirmPassword: forgotPasswordData.confirmPassword,
         }),
       });
 
@@ -567,7 +763,17 @@ export default function ForceFitLogin({ onLoginSuccess }) {
         return;
       }
 
-      setErrorMessage("");
+      setShowForgotPasswordForm(false);
+      setHasSentForgotOtp(false);
+      setIsForgotOtpVerified(false);
+      setForgotPasswordNotice("");
+      setForgotPasswordData({
+        userName: "",
+        email: "",
+        otp: "",
+        newPassword: "",
+        confirmPassword: "",
+      });
       window.alert("Password reset successful. Please sign in with your new password.");
     } catch (_error) {
       setErrorMessage("Cannot connect to server. Please try again.");
@@ -581,30 +787,33 @@ export default function ForceFitLogin({ onLoginSuccess }) {
       return;
     }
 
-    const requestedUserName = window.prompt("Enter a username for the new admin account", "");
-    if (!requestedUserName || !requestedUserName.trim()) {
+    setRequestAccessData({
+      userName: "",
+      email: "",
+      password: "",
+      confirmPassword: "",
+    });
+    setShowRequestAccessPassword(false);
+    setShowRequestAccessForm(true);
+    setErrorMessage("");
+  };
+
+  const handleRequestAccessPasswordSubmit = async () => {
+    if (isRequestingAccess) {
       return;
     }
 
-    const requestedEmail = window.prompt("Enter email address", "");
-    if (!requestedEmail || !requestedEmail.trim()) {
+    if (!requestAccessData.userName.trim() || !requestAccessData.email.trim()) {
+      setErrorMessage("Username and email are required");
       return;
     }
 
-    const requestedPassword = window.prompt(
-      "Enter password (8+ chars with letters, numbers, symbols)",
-      ""
-    );
-    if (!requestedPassword) {
+    if (!requestAccessData.password || !requestAccessData.confirmPassword) {
+      setErrorMessage("Password and confirm password are required");
       return;
     }
 
-    const confirmPassword = window.prompt("Confirm password", "");
-    if (!confirmPassword) {
-      return;
-    }
-
-    if (requestedPassword !== confirmPassword) {
+    if (requestAccessData.password !== requestAccessData.confirmPassword) {
       setErrorMessage("Passwords do not match");
       return;
     }
@@ -619,9 +828,9 @@ export default function ForceFitLogin({ onLoginSuccess }) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          userName: requestedUserName.trim(),
-          email: requestedEmail.trim(),
-          password: requestedPassword,
+          userName: requestAccessData.userName.trim(),
+          email: requestAccessData.email.trim(),
+          password: requestAccessData.password,
         }),
       });
 
@@ -631,6 +840,8 @@ export default function ForceFitLogin({ onLoginSuccess }) {
         return;
       }
 
+      setShowRequestAccessForm(false);
+      setRequestAccessData({ userName: "", email: "", password: "", confirmPassword: "" });
       window.alert(
         data.message || "Request submitted. Wait until the main admin approves your access."
       );
@@ -644,6 +855,323 @@ export default function ForceFitLogin({ onLoginSuccess }) {
   return (
     <>
       <style>{styles}</style>
+
+      {showForgotPasswordForm && (
+        <div className="ff-modal-overlay">
+          <div className="ff-modal-card">
+            <div className="ff-modal-title">
+              Forgot <em>Password</em>
+            </div>
+            <div className="ff-modal-sub">Enter your account details, get OTP, then set a new password.</div>
+
+            <div className="ff-field-label">User Name</div>
+            <div className="ff-input-wrap" style={{ marginBottom: 14 }}>
+              <input
+                type="text"
+                placeholder="Enter user name"
+                value={forgotPasswordData.userName}
+                onChange={(e) =>
+                  setForgotPasswordData((prev) => ({
+                    ...prev,
+                    userName: e.target.value,
+                  }))
+                }
+              />
+            </div>
+
+            <div className="ff-field-label">Email</div>
+            <div className="ff-input-wrap" style={{ marginBottom: 14 }}>
+              <input
+                type="email"
+                placeholder="Enter registered email"
+                value={forgotPasswordData.email}
+                onChange={(e) =>
+                  setForgotPasswordData((prev) => ({
+                    ...prev,
+                    email: e.target.value,
+                  }))
+                }
+              />
+            </div>
+
+            <button
+              className="ff-sign-in-btn ff-modal-submit"
+              type="button"
+              onClick={handleSendForgotOtp}
+              disabled={isProcessingReset}
+              style={{ marginBottom: hasSentForgotOtp ? 14 : 2 }}
+            >
+              {isProcessingReset ? "Sending..." : hasSentForgotOtp ? "Resend OTP" : "Send OTP"}
+            </button>
+
+            {forgotPasswordNotice && (
+              <div
+                style={{
+                  marginBottom: 14,
+                  color: "#4b5563",
+                  fontSize: 12,
+                  fontWeight: 600,
+                }}
+              >
+                {forgotPasswordNotice}
+              </div>
+            )}
+
+            {errorMessage && (
+              <div
+                style={{
+                  marginBottom: 14,
+                  color: "#dc2626",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  letterSpacing: 0.2,
+                }}
+              >
+                {errorMessage}
+              </div>
+            )}
+
+            {hasSentForgotOtp && (
+              <>
+                <div className="ff-field-label">OTP</div>
+                <div className="ff-input-wrap" style={{ marginBottom: 14 }}>
+                  <input
+                    type="text"
+                    placeholder="Enter 6-digit OTP"
+                    value={forgotPasswordData.otp}
+                    onChange={(e) => {
+                      setIsForgotOtpVerified(false);
+                      setForgotPasswordData((prev) => ({
+                        ...prev,
+                        otp: e.target.value,
+                      }));
+                    }}
+                  />
+                </div>
+
+                <button
+                  className="ff-sign-in-btn ff-modal-submit"
+                  type="button"
+                  onClick={handleVerifyForgotOtp}
+                  disabled={isProcessingReset}
+                  style={{ marginBottom: 14 }}
+                >
+                  {isProcessingReset ? "Verifying..." : "Verify OTP"}
+                </button>
+
+                {isForgotOtpVerified && (
+                  <div
+                    style={{
+                      marginBottom: 14,
+                      color: "#15803d",
+                      fontSize: 12,
+                      fontWeight: 700,
+                    }}
+                  >
+                    OTP verified successfully.
+                  </div>
+                )}
+
+                {isForgotOtpVerified && (
+                  <>
+                    <div className="ff-field-label">New Password</div>
+                    <div className="ff-input-wrap" style={{ marginBottom: 14 }}>
+                      <input
+                        type={showForgotPasswordValues ? "text" : "password"}
+                        placeholder="Enter new password"
+                        value={forgotPasswordData.newPassword}
+                        onChange={(e) =>
+                          setForgotPasswordData((prev) => ({
+                            ...prev,
+                            newPassword: e.target.value,
+                          }))
+                        }
+                      />
+                      <button
+                        className="ff-show-btn"
+                        onClick={() => setShowForgotPasswordValues(!showForgotPasswordValues)}
+                        type="button"
+                      >
+                        {showForgotPasswordValues ? "Hide" : "Show"}
+                      </button>
+                    </div>
+
+                    <div className="ff-field-label">Confirm Password</div>
+                    <div className="ff-input-wrap" style={{ marginBottom: 18 }}>
+                      <input
+                        type={showForgotPasswordValues ? "text" : "password"}
+                        placeholder="Confirm new password"
+                        value={forgotPasswordData.confirmPassword}
+                        onChange={(e) =>
+                          setForgotPasswordData((prev) => ({
+                            ...prev,
+                            confirmPassword: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+
+            <div className="ff-modal-actions">
+              <button
+                className="ff-modal-cancel"
+                type="button"
+                onClick={() => {
+                  if (isProcessingReset) return;
+                  setShowForgotPasswordForm(false);
+                  setHasSentForgotOtp(false);
+                  setIsForgotOtpVerified(false);
+                  setShowForgotPasswordValues(false);
+                  setForgotPasswordNotice("");
+                  setForgotPasswordData({
+                    userName: "",
+                    email: "",
+                    otp: "",
+                    newPassword: "",
+                    confirmPassword: "",
+                  });
+                  setErrorMessage("");
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="ff-sign-in-btn ff-modal-submit"
+                type="button"
+                onClick={handleForgotPasswordResetSubmit}
+                disabled={!hasSentForgotOtp || !isForgotOtpVerified || isProcessingReset}
+              >
+                {isProcessingReset ? "Processing..." : "Reset Password"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRequestAccessForm && (
+        <div className="ff-modal-overlay">
+          <div className="ff-modal-card">
+            <div className="ff-modal-title">
+              Request <em>Access</em>
+            </div>
+            <div className="ff-modal-sub">Fill your details and submit for main admin approval.</div>
+
+            <div className="ff-field-label">User Name</div>
+            <div className="ff-input-wrap" style={{ marginBottom: 14 }}>
+              <input
+                type="text"
+                placeholder="Enter user name"
+                value={requestAccessData.userName}
+                onChange={(e) =>
+                  setRequestAccessData((prev) => ({
+                    ...prev,
+                    userName: e.target.value,
+                  }))
+                }
+              />
+            </div>
+
+            <div className="ff-field-label">Email</div>
+            <div className="ff-input-wrap" style={{ marginBottom: 14 }}>
+              <input
+                type="email"
+                placeholder="Enter email address"
+                value={requestAccessData.email}
+                onChange={(e) =>
+                  setRequestAccessData((prev) => ({
+                    ...prev,
+                    email: e.target.value,
+                  }))
+                }
+              />
+            </div>
+
+            <div className="ff-field-label">Password</div>
+            <div className="ff-input-wrap" style={{ marginBottom: 14 }}>
+              <input
+                type={showRequestAccessPassword ? "text" : "password"}
+                placeholder="Enter password (8+ chars with letters, numbers, symbols)"
+                value={requestAccessData.password}
+                onChange={(e) =>
+                  setRequestAccessData((prev) => ({
+                    ...prev,
+                    password: e.target.value,
+                  }))
+                }
+              />
+              <button
+                className="ff-show-btn"
+                onClick={() => setShowRequestAccessPassword(!showRequestAccessPassword)}
+                type="button"
+              >
+                {showRequestAccessPassword ? "Hide" : "Show"}
+              </button>
+            </div>
+
+            <div className="ff-field-label">Confirm Password</div>
+            <div className="ff-input-wrap" style={{ marginBottom: 18 }}>
+              <input
+                type={showRequestAccessPassword ? "text" : "password"}
+                placeholder="Confirm password"
+                value={requestAccessData.confirmPassword}
+                onChange={(e) =>
+                  setRequestAccessData((prev) => ({
+                    ...prev,
+                    confirmPassword: e.target.value,
+                  }))
+                }
+              />
+            </div>
+
+            {errorMessage && (
+              <div
+                style={{
+                  marginBottom: 14,
+                  color: "#dc2626",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  letterSpacing: 0.2,
+                }}
+              >
+                {errorMessage}
+              </div>
+            )}
+
+            <div className="ff-modal-actions">
+              <button
+                className="ff-modal-cancel"
+                type="button"
+                onClick={() => {
+                  if (isRequestingAccess) return;
+                  setShowRequestAccessForm(false);
+                  setShowRequestAccessPassword(false);
+                  setRequestAccessData({
+                    userName: "",
+                    email: "",
+                    password: "",
+                    confirmPassword: "",
+                  });
+                  setErrorMessage("");
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="ff-sign-in-btn ff-modal-submit"
+                type="button"
+                onClick={handleRequestAccessPasswordSubmit}
+                disabled={isRequestingAccess}
+              >
+                {isRequestingAccess ? "Submitting..." : "Submit"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="ff-body">
         <div className="ff-card">
           {/* LEFT PANEL */}
