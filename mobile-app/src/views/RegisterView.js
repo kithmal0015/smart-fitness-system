@@ -8,7 +8,6 @@ import {
   TextInput,
   ScrollView,
   Modal,
-  FlatList,
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
@@ -21,7 +20,7 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useRegisterController } from '../controllers/AuthController';
-import { GENDER_OPTIONS } from '../models/UserModel';
+import { FITNESS_GOAL_OPTIONS } from '../models/UserModel';
 import { COLORS, RADIUS, SPACING } from './theme';
 
 const { height } = Dimensions.get('window');
@@ -182,16 +181,45 @@ export default function RegisterScreen({ navigation }) {
             }
           />
 
-          {/* Gender picker */}
+          {/* Gender */}
           <InputField
             label="Gender"
-            placeholder="Select gender"
+            placeholder="Type gender"
             value={ctrl.form.gender}
+            onChangeText={(v) => ctrl.handleChange('gender', v)}
             error={ctrl.errors.gender}
-            editable={false}
-            onPress={ctrl.handleGenderSelectorPress}
-            rightIcon={<Text style={styles.chevron}>▾</Text>}
           />
+
+
+
+
+    <View style={styles.fieldWrapper}>
+            <Text style={styles.fieldLabel}>Fitness Goal</Text>
+            {/* <Text style={styles.selectionHint}>Select Your Fitness Goals</Text> */}
+            <View style={styles.goalContainer}>
+              {FITNESS_GOAL_OPTIONS.map((goal) => {
+                const selected = (ctrl.form.fitnessGoals || []).includes(goal);
+                return (
+                  <TouchableOpacity
+                    key={goal}
+                    style={[styles.goalChip, selected && styles.goalChipActive]}
+                    activeOpacity={0.85}
+                    onPress={() => ctrl.handleFitnessGoalToggle(goal)}
+                  >
+                    <Text style={[styles.goalChipText, selected && styles.goalChipTextActive]}>
+                      {goal}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            {ctrl.errors.fitnessGoals ? (
+              <Text style={styles.errorText}>{ctrl.errors.fitnessGoals}</Text>
+            ) : null}
+          </View>
+
+
+
 
           <InputField
             label="Phone Number"
@@ -201,6 +229,7 @@ export default function RegisterScreen({ navigation }) {
             error={ctrl.errors.phoneNumber}
             keyboardType="phone-pad"
           />
+
 
           {/* Date of Birth */}
           <InputField
@@ -214,6 +243,8 @@ export default function RegisterScreen({ navigation }) {
             onPress={ctrl.openDobModal}
             rightIcon={<MaterialIcons name="calendar-month" size={18} style={styles.calendarIcon} />}
           />
+
+      
 
           {/* Profile Image Upload */}
           <View style={styles.imageUploadSection}>
@@ -271,52 +302,6 @@ export default function RegisterScreen({ navigation }) {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
-
-      {/* ── Gender Modal ── */}
-      <Modal
-        visible={ctrl.genderModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={ctrl.closeGenderModal}
-      >
-        <TouchableOpacity
-          style={styles.modalBackdrop}
-          activeOpacity={1}
-          onPress={ctrl.closeGenderModal}
-        />
-        <View style={styles.modalSheet}>
-          <View style={styles.modalHandle} />
-          <Text style={styles.modalTitle}>Select Gender</Text>
-          <FlatList
-            data={GENDER_OPTIONS}
-            keyExtractor={(item) => item}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={[
-                  styles.modalOption,
-                  ctrl.form.gender === item && styles.modalOptionActive,
-                ]}
-                onPress={() => {
-                  ctrl.handleChange('gender', item);
-                  ctrl.closeGenderModal();
-                }}
-              >
-                <Text
-                  style={[
-                    styles.modalOptionText,
-                    ctrl.form.gender === item && styles.modalOptionTextActive,
-                  ]}
-                >
-                  {item}
-                </Text>
-                {ctrl.form.gender === item && (
-                  <Text style={styles.checkmark}>✓</Text>
-                )}
-              </TouchableOpacity>
-            )}
-          />
-        </View>
-      </Modal>
 
       {/* ── DOB Modal ── */}
       <Modal
@@ -450,6 +435,36 @@ const styles = StyleSheet.create({
   chevron: { color: COLORS.textSecondary, fontSize: 16 },
   calendarIcon: { color: COLORS.white },
   errorText: { color: COLORS.error, fontSize: 11, marginTop: 4 },
+  selectionHint: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    marginBottom: SPACING.sm,
+  },
+  goalContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACING.sm,
+  },
+  goalChip: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.full,
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.md,
+    backgroundColor: COLORS.inputBg,
+  },
+  goalChipActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: 'rgba(255, 193, 7, 0.18)',
+  },
+  goalChipText: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  goalChipTextActive: {
+    color: COLORS.accent,
+  },
 
   generalErrorBox: {
     backgroundColor: 'rgba(255,77,77,0.12)',

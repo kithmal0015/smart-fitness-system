@@ -1,4 +1,5 @@
 export const GENDER_OPTIONS = ['Male', 'Female', 'Other', 'Prefer not to say'];
+export const FITNESS_GOAL_OPTIONS = ['Fat Burning', 'Muscle Gain', 'Yoga session'];
 
 export const initialRegisterState = {
   firstName: '',
@@ -9,6 +10,7 @@ export const initialRegisterState = {
   gender: '',
   phoneNumber: '+94 ',
   dateOfBirth: '',
+  fitnessGoals: [],
   profileImage: null,
 };
 
@@ -57,6 +59,10 @@ export function validateRegisterForm(form) {
 
   if (!form.dateOfBirth.trim()) {
     errors.dateOfBirth = 'Date of birth is required';
+  }
+
+  if (!Array.isArray(form.fitnessGoals) || form.fitnessGoals.length === 0) {
+    errors.fitnessGoals = 'Select at least 1 fitness goal';
   }
 
   return errors;

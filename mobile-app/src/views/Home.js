@@ -11,9 +11,11 @@ import {
   StatusBar,
   Dimensions,
   ImageBackground,
+  Modal,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import QRCode from 'react-native-qrcode-svg';
 import { COLORS, RADIUS, SPACING } from './theme';
 import { useAppSession } from '../context/AppSessionContext';
 import { API_BASE_URL } from '../config/api';
@@ -21,6 +23,7 @@ import { API_BASE_URL } from '../config/api';
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - SPACING.lg * 2 - SPACING.sm) / 2;
 const WORKOUT_PLAN_CYCLE = ['Chest with Triceps', 'Arms with Legs', 'Rest Day'];
+const FULL_CATEGORY_LIST = ['All Type', 'Chest', 'Arms', 'Cardio', 'Yoga'];
 
 function getOrdinalSuffix(day) {
   if (day > 3 && day < 21) return 'th';
@@ -72,8 +75,6 @@ function getCurrentWeekDays() {
   return weekDays;
 }
 
-const CATEGORIES = ['All Type', 'Chest', 'Arms', 'Cardio', 'Yoga'];
-
 const PROGRAMS = [
   {
     id: '1',
@@ -107,6 +108,104 @@ const PROGRAMS = [
     image: 'https://incometaxgujarat.gov.in/uploads/photogallery_city/d6e9b3900437fe3024c181daf907aa26.jpg',
   },
 ];
+
+function normalizeGoal(goal) {
+  const raw = String(goal || '').trim().toLowerCase();
+  if (raw === 'fat burning') return 'fat';
+  if (raw === 'muscle gain') return 'muscle';
+  if (raw === 'yoga' || raw === 'yoga session') return 'yoga';
+  return '';
+}
+
+function getCategoryConfigByGoals(fitnessGoals) {
+  const normalized = Array.isArray(fitnessGoals)
+    ? Array.from(new Set(fitnessGoals.map(normalizeGoal).filter(Boolean)))
+    : [];
+
+  const hasFat = normalized.includes('fat');
+  const hasMuscle = normalized.includes('muscle');
+  const hasYoga = normalized.includes('yoga');
+  const total = normalized.length;
+
+  if ((hasFat && hasMuscle && hasYoga) || (hasFat && hasYoga && !hasMuscle)) {
+    return {
+      categories: ['All Type'],
+      programTypes: ['Chest', 'Arms', 'Cardio', 'Yoga'],
+    };
+  }
+
+  if (hasFat && hasMuscle && !hasYoga) {
+    return {
+      categories: ['Chest', 'Arms', 'Cardio'],
+      programTypes: ['Chest', 'Arms', 'Cardio'],
+    };
+  }
+
+  if (hasMuscle && hasYoga && !hasFat) {
+    return {
+      categories: ['Chest', 'Arms', 'Yoga'],
+      programTypes: ['Chest', 'Arms', 'Yoga'],
+    };
+  }
+
+  if (total === 1 && hasFat) {
+    return {
+      categories: ['Chest', 'Arms', 'Cardio'],
+      programTypes: ['Chest', 'Arms', 'Cardio'],
+    };
+  }
+
+  if (total === 1 && hasMuscle) {
+    return {
+      categories: ['Chest', 'Arms'],
+      programTypes: ['Chest', 'Arms'],
+    };
+  }
+
+  if (total === 1 && hasYoga) {
+    return {
+      categories: ['Yoga'],
+      programTypes: ['Yoga'],
+    };
+  }
+
+  return {
+    categories: FULL_CATEGORY_LIST,
+    programTypes: ['Chest', 'Arms', 'Cardio', 'Yoga'],
+  };
+}
+
+function resolveMemberIdentifier(user) {
+  const candidates = [
+    user && user.memberId,
+    user && user._id,
+    user && user.id,
+    user && user.email,
+    user && user.phoneNumber,
+  ];
+
+  for (const value of candidates) {
+    const normalized = String(value || '').trim();
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return '';
+}
+
+function buildMemberQrPayload(user) {
+  const memberId = resolveMemberIdentifier(user);
+  if (!memberId) {
+    return '';
+  }
+
+  return JSON.stringify({
+    type: 'member-access',
+    version: '1',
+    memberId,
+  });
+}
 
 
 
@@ -347,14 +446,14 @@ function WeekStrip({ colors }) {
   );
 }
 
-function CategoryTabs({ selected, onSelect, colors }) {
+function CategoryTabs({ categories, selected, onSelect, colors }) {
   return (
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.categoryRow}
     >
-      {CATEGORIES.map((cat) => (
+      {categories.map((cat) => (
         <TouchableOpacity
           key={cat}
           style={[
@@ -419,7 +518,42 @@ function ProgramGrid({ programs, colors }) {
   );
 }
 
-function BottomNav({ onProfilePress, colors }) {
+function MemberQrModal({ visible, onClose, user, colors }) {
+  const fullName = `${(user && user.firstName) || ''} ${(user && user.lastName) || ''}`.trim();
+  const displayName = fullName || 'Member';
+  const qrPayload = buildMemberQrPayload(user);
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.qrModalOverlay}>
+        <View style={[styles.qrModalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
+          <Text style={[styles.qrModalTitle, { color: colors.textPrimary }]}>My Member QR</Text>
+          <Text style={[styles.qrModalSubtitle, { color: colors.textSecondary }]}>Use this QR at reception for attendance.</Text>
+
+          <View style={styles.qrCanvas}>
+            {qrPayload ? (
+              <QRCode value={qrPayload} size={220} backgroundColor="#FFFFFF" color="#111111" />
+            ) : (
+              <Text style={[styles.qrUnavailableText, { color: colors.textSecondary }]}>QR unavailable. Please sign in again.</Text>
+            )}
+          </View>
+
+          <Text style={[styles.qrMemberName, { color: colors.textPrimary }]} numberOfLines={1}>{displayName}</Text>
+
+          <TouchableOpacity
+            style={[styles.qrCloseButton, { backgroundColor: colors.accent }]}
+            onPress={onClose}
+            activeOpacity={0.9}
+          >
+            <Text style={[styles.qrCloseButtonText, { color: colors.background }]}>Close</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function BottomNav({ onProfilePress, onQrPress, colors }) {
   const [active, setActive] = useState('home');
   const tabs = [
     { key: 'home', iconName: 'home' },
@@ -441,6 +575,9 @@ function BottomNav({ onProfilePress, colors }) {
             if (tab.key === 'profile' && onProfilePress) {
               onProfilePress();
             }
+            if (tab.key === 'qr' && onQrPress) {
+              onQrPress();
+            }
           }}
         >
           <MaterialIcons
@@ -459,6 +596,27 @@ function BottomNav({ onProfilePress, colors }) {
 export default function HomeScreen({ navigation }) {
   const { currentUser, themeMode, colors } = useAppSession();
   const [activeCategory, setActiveCategory] = useState('All Type');
+  const [isQrModalVisible, setIsQrModalVisible] = useState(false);
+
+  const categoryConfig = useMemo(
+    () => getCategoryConfigByGoals(currentUser && currentUser.fitnessGoals),
+    [currentUser]
+  );
+
+  const visibleCategories = categoryConfig.categories;
+  const visiblePrograms = useMemo(() => {
+    return PROGRAMS.filter((program) =>
+      categoryConfig.programTypes.some((type) =>
+        String(program.title || '').toLowerCase().includes(type.toLowerCase())
+      )
+    );
+  }, [categoryConfig]);
+
+  useEffect(() => {
+    if (!visibleCategories.includes(activeCategory)) {
+      setActiveCategory(visibleCategories[0] || 'All Type');
+    }
+  }, [activeCategory, visibleCategories]);
 
   const statusBarStyle = useMemo(
     () => (themeMode === 'dark' ? 'light-content' : 'dark-content'),
@@ -471,8 +629,8 @@ export default function HomeScreen({ navigation }) {
 
   const filteredPrograms =
     activeCategory === 'All Type'
-      ? PROGRAMS
-      : PROGRAMS.filter((p) =>
+      ? visiblePrograms
+      : visiblePrograms.filter((p) =>
           p.title.toLowerCase().includes(activeCategory.toLowerCase())
         );
 
@@ -502,14 +660,32 @@ export default function HomeScreen({ navigation }) {
           </View>
 
           {/* Category tabs */}
-          <CategoryTabs selected={activeCategory} onSelect={setActiveCategory} colors={colors} />
+          <CategoryTabs
+            categories={visibleCategories}
+            selected={activeCategory}
+            onSelect={setActiveCategory}
+            colors={colors}
+          />
 
           {/* Program grid */}
-          <ProgramGrid programs={filteredPrograms.length > 0 ? filteredPrograms : PROGRAMS} colors={colors} />
+          <ProgramGrid
+            programs={filteredPrograms.length > 0 ? filteredPrograms : visiblePrograms}
+            colors={colors}
+          />
         </ScrollView>
 
         {/* Bottom nav */}
-        <BottomNav onProfilePress={openProfileSettings} colors={colors} />
+        <BottomNav
+          onProfilePress={openProfileSettings}
+          onQrPress={() => setIsQrModalVisible(true)}
+          colors={colors}
+        />
+        <MemberQrModal
+          visible={isQrModalVisible}
+          onClose={() => setIsQrModalVisible(false)}
+          user={currentUser}
+          colors={colors}
+        />
       </SafeAreaView>
     </View>
   );
@@ -772,4 +948,60 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.accent,
   },
   navIcon: { fontSize: 20 },
+
+  // Member QR modal
+  qrModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.52)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.lg,
+  },
+  qrModalCard: {
+    width: '100%',
+    maxWidth: 360,
+    borderRadius: RADIUS.xl,
+    borderWidth: 1,
+    padding: SPACING.lg,
+    alignItems: 'center',
+  },
+  qrModalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  qrModalSubtitle: {
+    marginTop: 6,
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  qrCanvas: {
+    marginTop: SPACING.lg,
+    backgroundColor: '#FFFFFF',
+    padding: 12,
+    borderRadius: 16,
+  },
+  qrUnavailableText: {
+    width: 220,
+    textAlign: 'center',
+    paddingVertical: 24,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  qrMemberName: {
+    marginTop: SPACING.md,
+    fontSize: 16,
+    fontWeight: '700',
+    maxWidth: 280,
+  },
+  qrCloseButton: {
+    marginTop: SPACING.lg,
+    minWidth: 120,
+    paddingVertical: 12,
+    borderRadius: RADIUS.full,
+    alignItems: 'center',
+  },
+  qrCloseButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
 });

@@ -68,6 +68,22 @@ export function useRegisterController(navigation) {
     }
   };
 
+  const handleFitnessGoalToggle = (goal) => {
+    setForm((prev) => {
+      const selectedGoals = Array.isArray(prev.fitnessGoals) ? prev.fitnessGoals : [];
+      const alreadySelected = selectedGoals.includes(goal);
+
+      if (alreadySelected) {
+        const updatedGoals = selectedGoals.filter((item) => item !== goal);
+        setErrors((prevErrors) => ({ ...prevErrors, fitnessGoals: null }));
+        return { ...prev, fitnessGoals: updatedGoals };
+      }
+
+      setErrors((prevErrors) => ({ ...prevErrors, fitnessGoals: null }));
+      return { ...prev, fitnessGoals: [...selectedGoals, goal] };
+    });
+  };
+
   const handleConfirmPasswordFocus = () => {
     if (!form.password) {
       return;
@@ -270,6 +286,7 @@ export function useRegisterController(navigation) {
     dobDraftDate,
     handleChange,
     handlePhoneNumberChange,
+    handleFitnessGoalToggle,
     handlePasswordFieldFocus,
     handleConfirmPasswordFocus,
     handleGenderSelectorPress,
