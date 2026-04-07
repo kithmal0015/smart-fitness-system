@@ -20,7 +20,7 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useRegisterController } from '../controllers/AuthController';
-import { FITNESS_GOAL_OPTIONS } from '../models/UserModel';
+import { FITNESS_GOAL_OPTIONS, GENDER_OPTIONS } from '../models/UserModel';
 import { COLORS, RADIUS, SPACING } from './theme';
 
 const { height } = Dimensions.get('window');
@@ -184,10 +184,12 @@ export default function RegisterScreen({ navigation }) {
           {/* Gender */}
           <InputField
             label="Gender"
-            placeholder="Type gender"
+            placeholder="Select your gender"
             value={ctrl.form.gender}
-            onChangeText={(v) => ctrl.handleChange('gender', v)}
             error={ctrl.errors.gender}
+            editable={false}
+            onPress={ctrl.openGenderModal}
+            rightIcon={<MaterialIcons name="arrow-drop-down" size={20} style={styles.chevron} />}
           />
 
 
@@ -302,6 +304,47 @@ export default function RegisterScreen({ navigation }) {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Gender Modal */}
+      <Modal
+        visible={ctrl.genderModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={ctrl.closeGenderModal}
+      >
+        <TouchableOpacity
+          style={styles.modalBackdrop}
+          activeOpacity={1}
+          onPress={ctrl.closeGenderModal}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            style={styles.modalSheet}
+            onPress={() => {}}
+          >
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalTitle}>Select Gender</Text>
+            {GENDER_OPTIONS.map((option) => {
+              const isActive = ctrl.form.gender === option;
+              return (
+                <TouchableOpacity
+                  key={option}
+                  style={[styles.modalOption, isActive && styles.modalOptionActive]}
+                  onPress={() => {
+                    ctrl.handleChange('gender', option);
+                    ctrl.closeGenderModal();
+                  }}
+                >
+                  <Text style={[styles.modalOptionText, isActive && styles.modalOptionTextActive]}>
+                    {option}
+                  </Text>
+                  {isActive ? <MaterialIcons name="check" size={18} style={styles.checkmark} /> : null}
+                </TouchableOpacity>
+              );
+            })}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
 
       {/* ── DOB Modal ── */}
       <Modal
@@ -500,6 +543,7 @@ const styles = StyleSheet.create({
   modalBackdrop: {
     flex: 1,
     backgroundColor: COLORS.overlayDark,
+    justifyContent: 'flex-end',
   },
   modalSheet: {
     backgroundColor: COLORS.surface,

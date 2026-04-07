@@ -1,4 +1,4 @@
-export const GENDER_OPTIONS = ['Male', 'Female', 'Other', 'Prefer not to say'];
+export const GENDER_OPTIONS = ['Male', 'Female', 'Other'];
 export const FITNESS_GOAL_OPTIONS = ['Fat Burning', 'Muscle Gain', 'Yoga session'];
 
 export const initialRegisterState = {

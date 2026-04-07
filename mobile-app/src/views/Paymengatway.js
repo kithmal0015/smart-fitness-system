@@ -40,7 +40,43 @@ export default function Paymengatway({ navigation, route }) {
 		if (cleaned.length <= 2) {
 			return cleaned;
 		}
+
 		return `${cleaned.slice(0, 2)}/${cleaned.slice(2)}`;
+	};
+
+	const handleExpiryChange = (value) => {
+		const cleaned = value.replace(/\D/g, '').slice(0, 4);
+		const monthDigits = cleaned.slice(0, 2);
+		const yearDigits = cleaned.slice(2, 4);
+
+		if (monthDigits.length === 1) {
+			if (monthDigits !== '0' && monthDigits !== '1') {
+				return;
+			}
+		}
+
+		if (monthDigits.length === 2) {
+			const monthNumber = Number(monthDigits);
+			if (monthNumber < 1 || monthNumber > 12) {
+				return;
+			}
+		}
+
+		if (yearDigits.length === 1) {
+			const firstYearDigit = Number(yearDigits);
+			if (firstYearDigit < 2) {
+				return;
+			}
+		}
+
+		if (yearDigits.length === 2) {
+			const yearNumber = Number(yearDigits);
+			if (yearNumber <= 25) {
+				return;
+			}
+		}
+
+		setExpiryDate(formatExpiry(cleaned));
 	};
 
 	const handlePay = async () => {
@@ -67,6 +103,25 @@ export default function Paymengatway({ navigation, route }) {
 
 		if (expiryDate.length !== 5) {
 			Alert.alert('Expiration date', 'Please enter expiry date in MM/YY format.');
+			return;
+		}
+
+		const expiryMatch = expiryDate.match(/^(\d{2})\/(\d{2})$/);
+		if (!expiryMatch) {
+			Alert.alert('Expiration date', 'Please enter expiry date in MM/YY format.');
+			return;
+		}
+
+		const month = Number(expiryMatch[1]);
+		const year = Number(expiryMatch[2]);
+
+		if (month < 1 || month > 12) {
+			Alert.alert('Expiration date', 'Month must be between 01 and 12.');
+			return;
+		}
+
+		if (year <= 25) {
+			Alert.alert('Expiration date', 'Year must be greater than 25.');
 			return;
 		}
 
@@ -129,6 +184,16 @@ export default function Paymengatway({ navigation, route }) {
 		<SafeAreaView style={styles.screen}>
 			<StatusBar barStyle="light-content" backgroundColor="#111827" />
 			<ScrollView contentContainerStyle={styles.scrollContainer}>
+				<View style={styles.topHeaderRow}>
+					<TouchableOpacity
+						style={styles.backButton}
+						activeOpacity={0.85}
+						onPress={() => navigation.goBack()}
+					>
+						<Text style={styles.backButtonText}>{'Back'}</Text>
+					</TouchableOpacity>
+				</View>
+
 				<View style={styles.termsCard}>
 
                     
@@ -224,7 +289,7 @@ export default function Paymengatway({ navigation, route }) {
 							<Text style={styles.label}>Expiration Date</Text>
 							<TextInput
 								value={expiryDate}
-								onChangeText={(value) => setExpiryDate(formatExpiry(value))}
+								onChangeText={handleExpiryChange}
 								placeholder="MM/YY"
 								placeholderTextColor="#9AA0A6"
 								keyboardType="number-pad"
@@ -292,6 +357,27 @@ const styles = StyleSheet.create({
 		paddingTop: 24,
 		paddingBottom: 20,
 		paddingHorizontal: 16,
+	},
+	topHeaderRow: {
+		width: '100%',
+		alignItems: 'flex-start',
+		marginBottom: 10,
+	},
+	backButton: {
+		width: 56,
+		height: 30,
+		borderRadius: 18,
+		alignItems: 'center',
+		justifyContent: 'center',
+		backgroundColor: '#1F2937',
+		borderWidth: 1,
+		borderColor: '#374151',
+	},
+	backButtonText: {
+		fontSize: 12,
+		lineHeight: 22,
+		fontWeight: '700',
+		color: '#FFFFFF',
 	},
 	card: {
 		width: '100%',

@@ -23,7 +23,7 @@ import { API_BASE_URL } from '../config/api';
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - SPACING.lg * 2 - SPACING.sm) / 2;
 const WORKOUT_PLAN_CYCLE = ['Chest with Triceps', 'Arms with Legs', 'Rest Day'];
-const FULL_CATEGORY_LIST = ['All Type', 'Chest', 'Arms', 'Cardio', 'Yoga'];
+const FULL_CATEGORY_LIST = ['Chest', 'Arms', 'Cardio', 'Yoga'];
 
 function getOrdinalSuffix(day) {
   if (day > 3 && day < 21) return 'th';
@@ -127,52 +127,58 @@ function getCategoryConfigByGoals(fitnessGoals) {
   const hasYoga = normalized.includes('yoga');
   const total = normalized.length;
 
+  let programTypes = [];
+
   if ((hasFat && hasMuscle && hasYoga) || (hasFat && hasYoga && !hasMuscle)) {
-    return {
-      categories: ['All Type'],
-      programTypes: ['Chest', 'Arms', 'Cardio', 'Yoga'],
-    };
-  }
-
-  if (hasFat && hasMuscle && !hasYoga) {
-    return {
-      categories: ['Chest', 'Arms', 'Cardio'],
-      programTypes: ['Chest', 'Arms', 'Cardio'],
-    };
-  }
-
-  if (hasMuscle && hasYoga && !hasFat) {
-    return {
-      categories: ['Chest', 'Arms', 'Yoga'],
-      programTypes: ['Chest', 'Arms', 'Yoga'],
-    };
-  }
-
-  if (total === 1 && hasFat) {
-    return {
-      categories: ['Chest', 'Arms', 'Cardio'],
-      programTypes: ['Chest', 'Arms', 'Cardio'],
-    };
-  }
-
-  if (total === 1 && hasMuscle) {
-    return {
-      categories: ['Chest', 'Arms'],
-      programTypes: ['Chest', 'Arms'],
-    };
-  }
-
-  if (total === 1 && hasYoga) {
-    return {
-      categories: ['Yoga'],
-      programTypes: ['Yoga'],
-    };
+    programTypes = ['Chest', 'Arms', 'Cardio', 'Yoga'];
+  } else if (hasFat && hasMuscle && !hasYoga) {
+    programTypes = ['Chest', 'Arms', 'Cardio'];
+  } else if (hasMuscle && hasYoga && !hasFat) {
+    programTypes = ['Chest', 'Arms', 'Yoga'];
+  } else if (total === 1 && hasFat) {
+    programTypes = ['Chest', 'Arms', 'Cardio'];
+  } else if (total === 1 && hasMuscle) {
+    programTypes = ['Chest', 'Arms'];
+  } else if (total === 1 && hasYoga) {
+    programTypes = ['Yoga'];
+  } else {
+    programTypes = FULL_CATEGORY_LIST;
   }
 
   return {
-    categories: FULL_CATEGORY_LIST,
-    programTypes: ['Chest', 'Arms', 'Cardio', 'Yoga'],
+    categories: ['All', ...FULL_CATEGORY_LIST],
+    allowedCategories: ['All', ...programTypes],
+    programTypes,
   };
+}
+
+function resolveInitialCategory(categories) {
+  if (Array.isArray(categories) && categories.includes('All')) {
+    return 'All';
+  }
+  return (categories && categories[0]) || 'All';
+}
+
+function resolveNextCategory(currentCategory, categories) {
+  if (Array.isArray(categories) && categories.includes(currentCategory)) {
+    return currentCategory;
+  }
+  return resolveInitialCategory(categories);
+}
+
+function getFilteredPrograms(activeCategory, visiblePrograms) {
+  if (activeCategory === 'All') {
+    return visiblePrograms;
+  }
+  return visiblePrograms.filter((p) =>
+    String(p.programType || '').toLowerCase() === activeCategory.toLowerCase()
+  );
+}
+
+function getProgramType(program) {
+  const title = String((program && program.title) || '').toLowerCase();
+  const matchedType = FULL_CATEGORY_LIST.find((type) => title.includes(type.toLowerCase()));
+  return matchedType || '';
 }
 
 function resolveMemberIdentifier(user) {
@@ -446,41 +452,67 @@ function WeekStrip({ colors }) {
   );
 }
 
-function CategoryTabs({ categories, selected, onSelect, colors }) {
+function CategoryTabs({ categories, allowedCategories, selected, onSelect, onBlockedSelect, colors }) {
   return (
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.categoryRow}
     >
-      {categories.map((cat) => (
-        <TouchableOpacity
-          key={cat}
-          style={[
-            styles.categoryChip,
-            { backgroundColor: colors.surface, borderColor: colors.border },
-            selected === cat && [styles.categoryChipActive, { backgroundColor: colors.accent, borderColor: colors.accent }],
-          ]}
-          onPress={() => onSelect(cat)}
-        >
-          <Text
+      {categories.map((cat) => {
+        const isAllowed = Array.isArray(allowedCategories)
+          ? allowedCategories.includes(cat)
+          : true;
+
+        return (
+          <TouchableOpacity
+            key={cat}
             style={[
-              styles.categoryText,
-              { color: colors.textSecondary },
-              selected === cat && [styles.categoryTextActive, { color: colors.background }],
+              styles.categoryChip,
+              {
+                backgroundColor: isAllowed ? colors.surface : '#202020',
+                borderColor: isAllowed ? colors.border : '#8E8E8E',
+                opacity: isAllowed ? 1 : 0.75,
+              },
+              selected === cat && [styles.categoryChipActive, { backgroundColor: colors.accent, borderColor: colors.accent }],
             ]}
+            onPress={() => {
+              if (!isAllowed) {
+                if (onBlockedSelect) {
+                  onBlockedSelect();
+                }
+                return;
+              }
+              onSelect(cat);
+            }}
           >
-            {cat}
-          </Text>
-        </TouchableOpacity>
-      ))}
+            <Text
+              style={[
+                styles.categoryText,
+                { color: isAllowed ? colors.textSecondary : '#D9D9D9' },
+                selected === cat && [styles.categoryTextActive, { color: colors.background }],
+              ]}
+            >
+              {cat}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
     </ScrollView>
   );
 }
 
-function ProgramCard({ item, colors }) {
+function ProgramCard({ item, colors, onBlockedPress }) {
   return (
-    <TouchableOpacity style={styles.programCard} activeOpacity={0.88}>
+    <TouchableOpacity
+      style={styles.programCard}
+      activeOpacity={item.isAllowed ? 0.88 : 0.95}
+      onPress={() => {
+        if (!item.isAllowed && onBlockedPress) {
+          onBlockedPress();
+        }
+      }}
+    >
       <ImageBackground
         source={typeof item.image === 'string' ? { uri: item.image } : item.image}
         style={styles.programCardBg}
@@ -503,16 +535,26 @@ function ProgramCard({ item, colors }) {
           <Text style={styles.programTitle}>{item.title}</Text>
           <Text style={styles.programSubtitle} numberOfLines={1}>{item.subtitle}</Text>
         </View>
+
+        {!item.isAllowed ? (
+          <>
+            <View style={styles.programOverlayDisabled} />
+            <View style={styles.programLockedCenter}>
+              <MaterialIcons name="block" size={18} color="#F2F2F2" />
+              <Text style={styles.programLockedText}>Not Allowed</Text>
+            </View>
+          </>
+        ) : null}
       </ImageBackground>
     </TouchableOpacity>
   );
 }
 
-function ProgramGrid({ programs, colors }) {
+function ProgramGrid({ programs, colors, onBlockedPress }) {
   return (
     <View style={styles.programGrid}>
-      {programs.map((item, index) => (
-        <ProgramCard key={item.id} item={item} colors={colors} />
+      {programs.map((item) => (
+        <ProgramCard key={item.id} item={item} colors={colors} onBlockedPress={onBlockedPress} />
       ))}
     </View>
   );
@@ -595,28 +637,31 @@ function BottomNav({ onProfilePress, onQrPress, colors }) {
 //Main Screen
 export default function HomeScreen({ navigation }) {
   const { currentUser, themeMode, colors } = useAppSession();
-  const [activeCategory, setActiveCategory] = useState('All Type');
-  const [isQrModalVisible, setIsQrModalVisible] = useState(false);
-
   const categoryConfig = useMemo(
     () => getCategoryConfigByGoals(currentUser && currentUser.fitnessGoals),
     [currentUser]
   );
 
   const visibleCategories = categoryConfig.categories;
+  const allowedCategories = categoryConfig.allowedCategories;
+  const [activeCategory, setActiveCategory] = useState(() => resolveInitialCategory(visibleCategories));
+  const [isQrModalVisible, setIsQrModalVisible] = useState(false);
+
   const visiblePrograms = useMemo(() => {
-    return PROGRAMS.filter((program) =>
-      categoryConfig.programTypes.some((type) =>
-        String(program.title || '').toLowerCase().includes(type.toLowerCase())
-      )
-    );
-  }, [categoryConfig]);
+    return PROGRAMS.map((program) => {
+      const programType = getProgramType(program);
+      const isAllowed = categoryConfig.programTypes.includes(programType);
+      return {
+        ...program,
+        programType,
+        isAllowed,
+      };
+    });
+  }, [categoryConfig.programTypes]);
 
   useEffect(() => {
-    if (!visibleCategories.includes(activeCategory)) {
-      setActiveCategory(visibleCategories[0] || 'All Type');
-    }
-  }, [activeCategory, visibleCategories]);
+    setActiveCategory((prev) => resolveNextCategory(prev, visibleCategories));
+  }, [visibleCategories]);
 
   const statusBarStyle = useMemo(
     () => (themeMode === 'dark' ? 'light-content' : 'dark-content'),
@@ -627,12 +672,13 @@ export default function HomeScreen({ navigation }) {
     navigation.navigate('ProfileSettings');
   };
 
-  const filteredPrograms =
-    activeCategory === 'All Type'
-      ? visiblePrograms
-      : visiblePrograms.filter((p) =>
-          p.title.toLowerCase().includes(activeCategory.toLowerCase())
-        );
+  const filteredPrograms = getFilteredPrograms(activeCategory, visiblePrograms);
+  const handleBlockedCategorySelect = () => {
+    Alert.alert('Notice', 'Your not Allowd');
+  };
+  const handleBlockedProgramSelect = () => {
+    Alert.alert('Notice', 'Your not Allowd');
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}> 
@@ -662,8 +708,10 @@ export default function HomeScreen({ navigation }) {
           {/* Category tabs */}
           <CategoryTabs
             categories={visibleCategories}
+            allowedCategories={allowedCategories}
             selected={activeCategory}
             onSelect={setActiveCategory}
+            onBlockedSelect={handleBlockedCategorySelect}
             colors={colors}
           />
 
@@ -671,6 +719,7 @@ export default function HomeScreen({ navigation }) {
           <ProgramGrid
             programs={filteredPrograms.length > 0 ? filteredPrograms : visiblePrograms}
             colors={colors}
+            onBlockedPress={handleBlockedProgramSelect}
           />
         </ScrollView>
 
@@ -896,6 +945,32 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.45)',
     borderRadius: RADIUS.lg,
+  },
+  programOverlayDisabled: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(40,40,40,0.62)',
+    borderRadius: RADIUS.lg,
+  },
+  programLockedCenter: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: [{ translateX: -54 }, { translateY: -16 }],
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    borderColor: '#BFBFBF',
+    borderWidth: 1,
+    borderRadius: RADIUS.full,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  programLockedText: {
+    color: '#F2F2F2',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   programBadgeRow: {
     flexDirection: 'row',
