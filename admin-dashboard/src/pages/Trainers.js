@@ -14,27 +14,48 @@ const TRAINER_ROLE_OPTIONS = ['Strength Coach', 'Yoga Instructor', 'Cardio Train
 function normalizeTrainerIdInput(value) {
 	const raw = String(value || '').toUpperCase();
 	const collapsed = raw.replace(/\s+/g, '');
-	const modernMatch = collapsed.match(/^([MF])T-?([0-9O]*)$/);
+	const modernMatch = collapsed.match(/^T-?([0-9O]*)$/);
 	if (modernMatch) {
-		const prefix = modernMatch[1] === 'F' ? 'FT' : 'MT';
-		const digits = String(modernMatch[2] || '').replace(/O/g, '0');
+		const digits = String(modernMatch[1] || '').replace(/O/g, '0');
 		if (!digits) {
-			return `${prefix}-`;
+			return 'T-';
 		}
-		return `${prefix}-${digits}`;
+		return `T-${digits}`;
 	}
 
-	const legacyMatch = collapsed.match(/^T-([MF])([0-9O]*)$/);
-	if (legacyMatch) {
-		const prefix = legacyMatch[1] === 'F' ? 'FT' : 'MT';
-		const digits = String(legacyMatch[2] || '').replace(/O/g, '0');
+	const anyPrefixMatch = collapsed.match(/^(?:[MF]T|T[MF]|T)-?([0-9O]*)$/);
+	if (anyPrefixMatch) {
+		const digits = String(anyPrefixMatch[1] || '').replace(/O/g, '0');
 		if (!digits) {
-			return `${prefix}-`;
+			return 'T-';
 		}
-		return `${prefix}-${digits}`;
+		return `T-${digits}`;
 	}
 
 	return collapsed;
+}
+
+function extractTrainerNumber(trainerId) {
+	const value = String(trainerId || '').toUpperCase().replace(/\s+/g, '');
+	const match = value.match(/^(?:T|MT|FT|TM|TF)-?(\d+)$/);
+	if (!match) {
+		return null;
+	}
+	const parsed = Number(match[1]);
+	return Number.isFinite(parsed) ? parsed : null;
+}
+
+function generateNextTrainerId(trainers) {
+	const maxId = (Array.isArray(trainers) ? trainers : []).reduce((maxValue, trainer) => {
+		const numeric = extractTrainerNumber(trainer && trainer.trainerId);
+		if (numeric === null) {
+			return maxValue;
+		}
+		return Math.max(maxValue, numeric);
+	}, 0);
+
+	const nextNumber = maxId + 1;
+	return `T-${String(nextNumber).padStart(3, '0')}`;
 }
 
 function getToken() {
@@ -46,8 +67,54 @@ function calculateAgeFromDob(dobValue) {
 		return '';
 	}
 
-	const dobDate = new Date(dobValue);
-	if (Number.isNaN(dobDate.getTime())) {
+	let dobDate = null;
+	const normalizedDob = String(dobValue).trim();
+
+	const isoMatch = normalizedDob.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+	const slashMatch = normalizedDob.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+	if (isoMatch) {
+		const year = Number(isoMatch[1]);
+		const month = Number(isoMatch[2]);
+		const day = Number(isoMatch[3]);
+		const candidate = new Date(year, month - 1, day);
+		const isValidDate =
+			candidate.getFullYear() === year &&
+			candidate.getMonth() === month - 1 &&
+			candidate.getDate() === day;
+
+		if (isValidDate) {
+			dobDate = candidate;
+		}
+	} else if (slashMatch) {
+		let first = Number(slashMatch[1]);
+		let second = Number(slashMatch[2]);
+		const year = Number(slashMatch[3]);
+
+		let month = first;
+		let day = second;
+
+		if (first > 12 && second <= 12) {
+			day = first;
+			month = second;
+		}
+
+		const candidate = new Date(year, month - 1, day);
+		const isValidDate =
+			candidate.getFullYear() === year &&
+			candidate.getMonth() === month - 1 &&
+			candidate.getDate() === day;
+
+		if (isValidDate) {
+			dobDate = candidate;
+		}
+	} else {
+		const candidate = new Date(normalizedDob);
+		if (!Number.isNaN(candidate.getTime())) {
+			dobDate = candidate;
+		}
+	}
+
+	if (!dobDate) {
 		return '';
 	}
 
@@ -60,7 +127,15 @@ function calculateAgeFromDob(dobValue) {
 		age -= 1;
 	}
 
-	return age >= 0 ? age : '';
+	return age >= 0 ? String(age) : '';
+}
+
+function getTodayAsInputDate() {
+	const now = new Date();
+	const year = now.getFullYear();
+	const month = String(now.getMonth() + 1).padStart(2, '0');
+	const day = String(now.getDate()).padStart(2, '0');
+	return `${year}-${month}-${day}`;
 }
 
 function readFileAsDataUrl(file) {
@@ -146,6 +221,7 @@ export default function Trainers({ accent, activeNav }) {
 	const fileInputRef = useRef(null);
 	const cameraVideoRef = useRef(null);
 	const cameraStreamRef = useRef(null);
+	const maxDobDate = useMemo(() => getTodayAsInputDate(), []);
 	const calculatedAge = useMemo(() => calculateAgeFromDob(formData.dob), [formData.dob]);
 
 	const stopCameraStream = useCallback(() => {
@@ -279,12 +355,14 @@ export default function Trainers({ accent, activeNav }) {
 	};
 
 	const handleAddTrainer = () => {
+		const nextTrainerId = generateNextTrainerId(trainers);
 		setNoticeMessage('');
 		setErrorMessage('');
 		setIsEditMode(false);
 		setEditingTrainerId('');
 		setFormData({
 			...initialFormState,
+			trainerId: nextTrainerId,
 			gender: getAutoGenderByNav(activeNav),
 		});
 		setProfileImageMode('skip');
@@ -738,8 +816,7 @@ export default function Trainers({ accent, activeNav }) {
 									value={formData.trainerId}
 									disabled={isEditMode}
 									onChange={(event) => handleFormChange('trainerId', event.target.value)}
-									placeholder="T-M004"
-									placeholder="FT-005"
+									placeholder="T-001"
 									style={{
 										padding: '10px 11px',
 										borderRadius: 10,
@@ -844,9 +921,11 @@ export default function Trainers({ accent, activeNav }) {
 									required
 									type="date"
 									value={formData.dob}
+									max={maxDobDate}
 									onChange={(event) => handleFormChange('dob', event.target.value)}
 									style={{ padding: '10px 11px', borderRadius: 10, border: '1px solid #d1d5db' }}
 								/>
+								<span style={{ fontSize: 11, color: '#6b7280' }}>Future dates are not allowed</span>
 							</div>
 
 							<div style={{ display: 'grid', gap: 8 }}>
