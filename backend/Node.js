@@ -2643,8 +2643,8 @@ app.post('/api/trainers', requireAdminAuth, async (req, res) => {
 		}
 
 		const normalizedTrainerId = normalizeTrainerId(trainerId);
-				if (!/^(?:FT|MT)-\d{3,}$/.test(normalizedTrainerId)) {
-					return res.status(400).json({ message: 'Trainer ID must be in FT-005 or MT-005 format' });
+				if (!/^(?:T|FT|MT)-\d{3,}$/.test(normalizedTrainerId)) {
+					return res.status(400).json({ message: 'Trainer ID must be in T-005 format' });
 				}
 
 		const normalizedFirstName = String(firstName).trim();
